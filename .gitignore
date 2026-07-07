@@ -1,0 +1,48 @@
+# --- Datos (no se versionan) ---
+data/
+
+# --- Entornos virtuales ---
+venv/
+venv_py314_old/
+.venv/
+env/
+
+# --- Python cache ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# --- Artefactos generados (modelos, features, logs) ---
+outputs/models/
+outputs/features/
+outputs/logs/
+
+# --- Las figuras y el reporte SÍ se versionan ---
+# outputs/figures/ -> incluido
+# outputs/report.md -> incluido
+
+# --- Dependencias de vendor (learntools no se usa en el pipeline) ---
+vendor/
+
+# --- Jupyter notebooks temporales ---
+.ipynb_checkpoints/
+
+# --- Notas internas (no relevantes para el repositorio público) ---
+claude.md
+PROGRESO.md
+
+# --- PDFs compilados (el fuente .tex ya está en el repo) ---
+*.pdf
+
+# --- Editor / OS ---
+.DS_Store
+.vscode/
+*.swp
+*.swo
+
+# --- Distribución Python ---
+*.egg-info/
+dist/
+build/

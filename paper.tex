@@ -1,0 +1,549 @@
+% ============================================================
+% Proyecto de Investigación — Entrega 4
+% PDF de entrega: TrenyanV3.pdf
+% ============================================================
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{times}
+
+\usepackage[margin=2cm, top=2.5cm, bottom=2.5cm]{geometry}
+\setlength{\columnsep}{0.6cm}
+
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=black,
+  urlcolor=black,
+}
+
+% Numeración romana para secciones (I, II, …)
+\setcounter{secnumdepth}{2}
+\renewcommand{\thesection}{\Roman{section}}
+\renewcommand{\thesubsection}{\Alph{subsection}}
+
+% Formato de secciones: centradas, sin negrita
+% Subsecciones: alineadas a la izquierda, cursiva, sin negrita
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}%
+  {-3.5ex \@plus -1ex \@minus -.2ex}%
+  {2.3ex \@plus.2ex}%
+  {\normalfont\normalsize\centering}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}%
+  {-3.25ex \@plus -1ex \@minus -.2ex}%
+  {1.5ex \@plus .2ex}%
+  {\normalfont\normalsize\itshape}}
+
+% Bibliografía IEEE como sección numerada y en tamaño reducido.
+\renewenvironment{thebibliography}[1]
+     {\section{REFERENCIAS}%
+      \footnotesize
+      \list{\@biblabel{\@arabic\c@enumiv}}%
+           {\settowidth\labelwidth{\@biblabel{#1}}%
+            \leftmargin\labelwidth
+            \advance\leftmargin\labelsep
+            \@openbib@code
+            \usecounter{enumiv}%
+            \let\p@enumiv\@empty
+            \renewcommand\theenumiv{\@arabic\c@enumiv}}%
+      \sloppy
+      \clubpenalty4000
+      \@clubpenalty \clubpenalty
+      \widowpenalty4000%
+      \sfcode`\.\@m}
+     {\def\@noitemerr
+       {\@latex@warning{Empty `thebibliography' environment}}%
+      \endlist}
+\makeatother
+
+% ---------------------------------------------------------------------------
+\title{\textbf{Aplicación de machine learning para la predicción de churn
+de comunicación en plataformas CRM multicanal: email, push e in-app}}
+\author{Abraham Trenyan}
+\date{}
+
+% ---------------------------------------------------------------------------
+\begin{document}
+
+% Título a ancho completo; resumen en una sola columna
+\twocolumn[
+  \maketitle
+  \vspace{-0.5em}
+]
+\noindent\textbf{Resumen: Las plataformas CRM multicanal detectan el desenganche
+del usuario de forma reactiva, cuando la pérdida de interacción ya ocurrió.
+Este trabajo propone un modelo de clasificación supervisada que combina señales
+de comportamiento de email, push e in-app para predecir el \textit{churn} de
+comunicación antes de que se materialice. El \textit{churn} de comunicación
+se define como el cese total de interacción con los canales de mensajería
+mientras el usuario permanece activo en la plataforma, una distinción no
+explorada en la literatura existente. Utilizando datos públicos de Kaggle,
+Python y los algoritmos Random Forest y XGBoost, se construye un pipeline de
+predicción evaluado con AUC-ROC y \textit{recall}, y diseñado para integrarse
+directamente en una plataforma CRM y activar campañas de re-engagement de
+forma automática. La propuesta traza un camino viable para transformar la
+detección del desenganche comunicacional en un proceso predictivo y
+accionable dentro de las plataformas CRM modernas.}
+\vspace{0.8em}
+
+% =============================================================================
+\section{INTRODUCCIÓN}
+% =============================================================================
+
+Los usuarios de plataformas digitales están hoy expuestos a un volumen muy
+elevado de comunicaciones de marca a través de canales como el correo
+electrónico, las notificaciones \textit{push} y los mensajes dentro de la
+aplicación. Estudios empíricos realizados en contextos móviles reportan
+medianas de entre 56 y 63 notificaciones diarias por usuario
+\cite{pielot2014insitu}, lo que se traduce en una carga de estímulos que
+puede asociarse con emociones negativas y con el descarte o la desinstalación
+de las aplicaciones responsables \cite{pielot2014insitu,okoshi2015attelia}.
+En el dominio específico del \textit{email} marketing, el análisis de
+Chaparro-Peláez y colaboradores sobre más de cinco mil campañas enviadas a
+cientos de millones de usuarios identifica una relación significativamente
+negativa entre la frecuencia de envío y la tasa de apertura
+\cite{chaparropelaez2022attention}, y Zhang, Kumar y Cosguner muestran que
+enviar por encima o por debajo de la frecuencia óptima puede reducir entre
+un dieciséis y un treinta y dos por ciento la rentabilidad esperada por
+cliente a lo largo de su ciclo de vida \cite{zhang2017dynamically}. En
+conjunto, esta evidencia sugiere que el \textit{engagement} con los canales
+de comunicación directa es sensible a la intensidad comunicacional, y que
+el desenganche puede manifestarse de forma progresiva antes de un abandono
+total.
+
+El desenganche comunicacional tiene además un impacto económico directo.
+Trabajos clásicos sobre retención estiman que una reducción del cinco
+por ciento en la tasa de deserción puede generar aumentos de beneficio
+de entre un veinticinco y un ochenta y cinco por ciento según la
+industria \cite{reichheld1990zero}, y que una mejora del uno por ciento
+en la retención incrementa el valor de la firma en aproximadamente un
+cinco por ciento \cite{gupta2004valuing}. En el caso de las
+comunicaciones móviles, los usuarios que reciben notificaciones
+\textit{push} en sus primeros noventa días presentan tasas de retención
+aproximadamente tres veces superiores a las de quienes no reciben
+ninguna \cite{airship2018push}.
+
+Las plataformas CRM gestionan su base de usuarios a través de estrategias
+de segmentación: los usuarios se agrupan por características comunes y
+reciben campañas diseñadas para ese perfil
+\cite{alvesgomes2023review,verhoef2010crm}. Este enfoque ha sido el
+estándar durante años, pero los segmentos se definen con reglas fijas que
+no se adaptan en tiempo real al comportamiento individual de cada usuario:
+para cuando un usuario es clasificado como inactivo o en riesgo, en muchos
+casos ya lleva semanas sin interactuar con ningún canal. La investigación
+en entornos CRM multicanal confirma que este modelo reactivo deja un
+margen de mejora considerable, especialmente cuando los datos de
+comportamiento existen pero no se explotan de forma integrada
+\cite{alvesgomes2023review,verhoef2010crm,abdelhady2025leveraging}.
+
+El campo del aprendizaje automático ofrece herramientas que pueden cambiar
+esta dinámica. Los modelos de clasificación supervisada, apoyados en
+fundamentos teóricos sólidos \cite{hastie2009elements}, aprenden patrones
+a partir de datos históricos y pueden anticipar eventos antes de que
+ocurran. Algoritmos como Random Forest \cite{breiman2001random} y XGBoost
+\cite{chen2016xgboost} han demostrado un rendimiento destacado en tareas
+de clasificación sobre datos tabulares complejos, incluyendo la predicción
+de \textit{churn} en banca \cite{brito2024framework},
+telecomunicaciones \cite{barsotti2024decade,abdelhady2025leveraging} y
+servicios digitales \cite{lalwani2022customer}. Su amplia adopción en
+investigación aplicada, su disponibilidad como herramientas de código
+abierto y su capacidad para manejar datos tabulares heterogéneos en
+escenarios con desbalance de clases los convierten en candidatos
+especialmente apropiados para el problema planteado
+\cite{chen2016xgboost,hastie2009elements,brito2024framework,lalwani2022customer}.
+La evaluación de estos modelos suele apoyarse en métricas como AUC-ROC
+\cite{fawcett2006introduction}, que permiten comparar clasificadores
+independientemente del umbral de decisión seleccionado. Más allá del
+\textit{churn} de producto, es decir la cancelación de una cuenta, el
+aprendizaje automático aplicado al análisis del comportamiento del
+usuario es una línea metodológica madura, con aplicaciones consolidadas
+en áreas como la predicción de respuesta a publicidad y el análisis
+de interacciones digitales \cite{martin2021survey,gharibshah2022user}.
+Revisiones sistemáticas específicas del campo de la predicción de
+\textit{churn} confirman avances importantes en algoritmos de
+\textit{ensemble} y arquitecturas de \textit{deep learning}, pero también
+identifican desafíos persistentes relacionados con el desbalance de
+clases, la interpretabilidad de los modelos y la comparabilidad entre
+estudios \cite{imani2025customer,barsotti2024decade}. Estas revisiones
+se concentran mayoritariamente en el \textit{churn} de producto en
+dominios como las telecomunicaciones, la banca o los servicios por
+suscripción, dejando en un segundo plano el comportamiento
+comunicacional del usuario a través de múltiples canales de mensajería.
+
+Esta brecha se vuelve especialmente visible cuando se considera lo que
+puede llamarse \textit{churn} de comunicación: el momento en que un
+usuario deja de interactuar con todos los canales de mensajería de una
+marca mientras permanece activo en la plataforma. A diferencia del
+\textit{churn} de producto, el \textit{churn} de comunicación es un
+fenómeno más sutil y más temprano. Un usuario que deja de abrir correos,
+ignora las notificaciones \textit{push} y no responde a los mensajes
+in-app no ha abandonado la plataforma, pero se ha vuelto efectivamente
+inalcanzable. Desde la perspectiva de la teoría del \textit{engagement}
+del cliente, que describe el involucramiento del consumidor a partir de
+dimensiones cognitivas, emocionales y conductuales
+\cite{hollebeek2014consumer,hollebeek2019digital}, esto representa un
+punto de inflexión crítico en el que la intervención preventiva todavía
+es posible.
+
+Este trabajo propone abordar ese vacío construyendo un modelo de
+clasificación supervisada que combine señales de comportamiento de los
+tres canales, email, \textit{push} e in-app, para predecir el riesgo de
+\textit{churn} de comunicación antes de que este ocurra. El modelo se
+construye con Python utilizando las bibliotecas scikit-learn y XGBoost,
+entrenado sobre datos públicos disponibles en Kaggle. El rendimiento
+del modelo se evalúa con AUC-ROC y \textit{recall}, métricas adecuadas
+para escenarios donde la prevalencia de la clase positiva debe
+determinarse empíricamente y donde el costo de no detectar un caso
+positivo supera al de una activación incorrecta. El
+objetivo final es que el puntaje de riesgo resultante pueda integrarse
+directamente en una plataforma CRM y activar campañas de re-engagement
+de forma automatizada, transformando la detección de desenganche de un
+proceso reactivo a uno predictivo.
+
+El cuerpo de este trabajo se organiza de la siguiente manera. La sección~II revisa el estado del arte en predicción de \textit{churn}, segmentación CRM, análisis de comportamiento de usuario y fatiga comunicacional. La sección~III presenta el marco teórico, abarcando los fundamentos del aprendizaje supervisado, los modelos de clasificación seleccionados y las métricas de evaluación. La sección~IV describe la metodología, incluyendo la preparación de datos, la ingeniería de \textit{features} y el entrenamiento del modelo. La sección~V presenta los resultados y el análisis. La sección~VI ofrece las conclusiones y posibles líneas de trabajo futuro.
+
+% =============================================================================
+\section{Estado del arte}
+% =============================================================================
+ 
+\subsection{Predicción de churn con aprendizaje automático}
+La predicción de churn de cliente es uno de los problemas mejor estudiados dentro del aprendizaje automático aplicado a marketing y servicios. La literatura reciente se concentra en dominios donde la cancelación de cuenta es un evento explícito y medible, principalmente telecomunicaciones \cite{abdelhady2025leveraging, barsotti2024decade}, banca minorista \cite{brito2024framework} y servicios digitales por suscripción \cite{lalwani2022customer}. Los algoritmos de ensamble basados en árboles se han consolidado como referencia metodológica, en buena medida por su rendimiento sobre datos tabulares y por la disponibilidad de implementaciones eficientes en bibliotecas de código abierto \cite{brito2024framework, lalwani2022customer}.
+ 
+Las revisiones sistemáticas del campo confirman que la predicción de churn ha incorporado de forma progresiva técnicas más sofisticadas, desde modelos clásicos hacia ensambles y arquitecturas de deep learning, y al mismo tiempo identifican desafíos persistentes vinculados al desbalance de clases, la interpretabilidad de los modelos y la falta de comparabilidad entre estudios debido a la heterogeneidad de datasets y métricas \cite{barsotti2024decade, imani2025customer}. Estas revisiones, sin embargo, mantienen el foco en el churn entendido como cancelación de cuenta, sin abordar formas más tempranas o parciales de desenganche del usuario.
+ 
+\subsection{Segmentación y CRM multicanal}
+La gestión de la relación con el cliente en plataformas multicanal se apoya tradicionalmente en estrategias de segmentación que agrupan a los usuarios según características demográficas, transaccionales o comportamentales, y que asignan campañas diseñadas para cada segmento \cite{alvesgomes2023review}. La literatura sobre métodos de segmentación en e-commerce muestra una evolución desde reglas heurísticas hacia técnicas de clustering basadas en datos, pero conserva en gran medida una lógica estática, en la que los segmentos se definen periódicamente y no se actualizan al ritmo del comportamiento individual \cite{alvesgomes2023review}.
+ 
+La revisión de Verhoef y colaboradores sobre CRM en entornos multicanal de venta minorista plantea, ya hace más de una década, que el potencial de las plataformas data-rich queda subutilizado cuando los datos de interacción existen pero no se integran de forma efectiva en los modelos de decisión operativos \cite{verhoef2010crm}. Esa observación sigue vigente: la mayoría de las implementaciones CRM actuales mantienen un enfoque reactivo, en el que la intervención llega después de que el desenganche ya se manifestó, y rara vez incorporan modelos predictivos que combinen señales de múltiples canales de mensajería en tiempo real.
+ 
+\subsection{Análisis de comportamiento de usuario}
+El análisis de comportamiento de usuario apoyado en aprendizaje automático es una línea metodológica madura, con aplicaciones consolidadas en personalización, sistemas de recomendación, detección de fraude y modelado de respuesta \cite{martin2021survey}. La revisión de Martín y colaboradores ofrece un mapa amplio del campo, identificando los modelos más utilizados, las fuentes de datos típicas y los tipos de tareas abordadas, y deja en evidencia que el comportamiento digital del usuario se ha estudiado intensamente desde múltiples ángulos \cite{martin2021survey}.
+ 
+Un subcampo particularmente desarrollado es la predicción de respuesta en publicidad online, donde el problema central consiste en estimar la probabilidad de que un usuario interactúe con un anuncio, ya sea mediante un click o una conversión posterior \cite{gharibshah2022user}. Las técnicas empleadas en este dominio comparten una base metodológica común con la predicción de churn, dado que ambos problemas se formulan como tareas de clasificación binaria sobre datos comportamentales con clases desbalanceadas. Sin embargo, el énfasis se ha puesto históricamente sobre la predicción de eventos positivos de respuesta, dejando menos explorado el modelado predictivo de la ausencia sostenida de interacción.
+ 
+\subsection{Frecuencia comunicacional y fatiga de usuario}
+La relación entre la intensidad de las comunicaciones de marca y la respuesta del usuario ha sido estudiada con profundidad tanto en el canal de notificaciones móviles como en el de email marketing. En el caso de las notificaciones push, el estudio in-situ de Pielot y colaboradores cuantifica el volumen al que están expuestos los usuarios y asocia ese volumen con emociones negativas y con la decisión de descartar o desinstalar aplicaciones \cite{pielot2014insitu}, mientras que Okoshi y colaboradores abordan la carga cognitiva generada por notificaciones interruptivas y exploran mecanismos para mitigar su impacto \cite{okoshi2015attelia}. Por el lado positivo, el informe técnico de Airship documenta diferencias significativas en las tasas de retención entre usuarios que reciben push notifications durante los primeros días de uso y aquellos que no las reciben \cite{airship2018push}.
+ 
+En el dominio del email marketing, el análisis a gran escala de Chaparro-Peláez y colaboradores identifica una relación negativa entre la frecuencia de envío y la tasa de apertura de los correos \cite{chaparropelaez2022attention}, y el modelo dinámico de Zhang, Kumar y Cosguner muestra que apartarse de la frecuencia óptima, ya sea por exceso o por defecto, deteriora la rentabilidad esperada por cliente a lo largo de su ciclo de vida \cite{zhang2017dynamically}. Esta evidencia se enmarca dentro de un campo de investigación consolidado, pero generalmente abordado canal por canal de forma aislada, sin integrar las señales de email, push e in-app en un único modelo de comportamiento del usuario.
+ 
+ 
+% =============================================================================
+\section{Marco teórico}
+% =============================================================================
+ 
+\subsection{Aprendizaje automático supervisado}
+El aprendizaje automático supervisado consiste en inducir una función de predicción a partir de un conjunto de ejemplos en los que cada observación está acompañada de una etiqueta conocida \cite{hastie2009elements}. A diferencia del aprendizaje no supervisado, que busca estructuras latentes en datos sin etiquetar, el supervisado dispone de una variable objetivo que guía el entrenamiento y permite cuantificar el error de predicción de forma directa. Cuando esa variable objetivo es categórica y toma dos valores posibles, el problema se denomina clasificación binaria.
+ 
+El churn de comunicación, definido como el cese de interacción con los canales de mensajería mientras el usuario permanece activo en la plataforma, encaja naturalmente en este paradigma. Para cada usuario es posible construir un vector de features comportamentales y asignarle una etiqueta binaria que indica si entró o no en estado de churn de comunicación dentro de una ventana temporal definida. El modelo aprende entonces a mapear ese vector de comportamiento a una probabilidad de churn, generando un puntaje accionable para la plataforma CRM.
+ 
+\subsection{Evaluación y generalización}
+La capacidad de un modelo de generalizar a datos no vistos es la propiedad fundamental que determina su utilidad práctica \cite{hastie2009elements}. Un modelo que memoriza los datos de entrenamiento sin capturar patrones genuinos, fenómeno conocido como sobreajuste, presenta un rendimiento engañosamente alto durante el entrenamiento y un rendimiento deficiente cuando se aplica a nuevos datos. Para mitigar este riesgo el conjunto de datos se particiona en al menos dos subconjuntos: uno de entrenamiento, sobre el cual se ajusta el modelo, y uno de prueba, reservado para estimar el rendimiento sobre datos nuevos.
+ 
+Cuando los datos son limitados o cuando se requiere comparar configuraciones de hiperparámetros, se recurre a la validación cruzada, que repite el procedimiento de partición varias veces sobre subconjuntos distintos y promedia las métricas obtenidas. En problemas de clasificación con clases desbalanceadas, como el churn de comunicación, la variante apropiada es la validación cruzada estratificada, que preserva la proporción de cada clase en todos los pliegues y evita que algún fold quede sin casos positivos.
+ 
+\subsection{Modelos basados en árboles}
+Los árboles de decisión particionan recursivamente el espacio de features mediante reglas condicionales simples, construyendo una estructura jerárquica de nodos en la que cada hoja representa una predicción \cite{hastie2009elements}. En tareas de clasificación, cada partición se elige optimizando una medida de impureza, típicamente el índice de Gini o la entropía, con el objetivo de separar las clases lo más limpiamente posible. La principal ventaja de un árbol es la interpretabilidad, ya que sus decisiones pueden seguirse rama por rama. La principal limitación es la tendencia al sobreajuste, especialmente cuando se permite que crezca hasta hojas puras.
+ 
+El método de Random Forest, propuesto por Breiman \cite{breiman2001random}, mitiga esa limitación entrenando un ensamble de árboles sobre muestras bootstrap del conjunto de entrenamiento y promediando sus predicciones. Cada árbol considera solo un subconjunto aleatorio de features en cada partición, lo que decorrelaciona las predicciones del ensamble y reduce significativamente la varianza. Random Forest maneja con eficacia datos tabulares heterogéneos, no requiere escalado previo de las features numéricas y proporciona una medida natural de importancia de variables, propiedades que lo hacen especialmente adecuado para problemas de clasificación con features comportamentales como los del presente trabajo.
+
+\subsection{Gradient Boosting y XGBoost}
+Los métodos de gradient boosting representan una estrategia de ensamble distinta a la de Random Forest. En lugar de entrenar árboles independientes en paralelo y promediar sus predicciones, el boosting construye una secuencia de árboles en la que cada nuevo árbol se especializa en corregir los errores cometidos por el ensamble parcial anterior. Esta orientación secuencial permite alcanzar un sesgo más bajo que el bagging, que entrena los modelos en paralelo, a costa de una mayor sensibilidad al ruido en los datos y de la necesidad de regularización explícita para evitar el sobreajuste.
+
+XGBoost, propuesto por Chen y Guestrin \cite{chen2016xgboost}, es una implementación de gradient boosting que incorpora regularización en la función objetivo, manejo nativo de valores faltantes y optimizaciones algorítmicas que lo han convertido en una referencia para problemas de clasificación sobre datos tabulares. Para contextos con clases desbalanceadas, XGBoost provee el parámetro \texttt{scale\_pos\_weight}, que pondera el error sobre la clase positiva durante el entrenamiento y permite compensar la asimetría sin requerir sobre-muestreo previo de los datos.
+
+\subsection{Regresión logística}
+La regresión logística modela la probabilidad de que
+una observación pertenezca a la clase positiva como
+una función sigmoidal de una combinación lineal de
+las \textit{features} \cite{hastie2009elements}. Su
+salida puede interpretarse directamente como
+probabilidad, y los coeficientes asociados a cada
+\textit{feature} expresan el impacto de esa variable
+sobre el logaritmo de la razón de probabilidades,
+propiedad que la convierte en una opción de referencia
+cuando se busca un modelo interpretable. Como
+contrapartida, asume una relación lineal entre las
+\textit{features} transformadas y el \textit{logit}
+del target, limitación que motiva el uso complementario
+de modelos no lineales como los basados en árboles.
+ 
+\subsection{Métricas de evaluación para clasificación desbalanceada}
+La métrica de exactitud, aunque intuitiva, resulta engañosa en escenarios con clases desbalanceadas. Un modelo trivial que asigna todos los casos a la clase mayoritaria puede alcanzar una exactitud aparentemente alta sin haber aprendido nada útil. En el problema de churn de comunicación la prevalencia de la clase positiva no se conoce a priori y puede resultar tanto minoritaria como mayoritaria según el dataset y la ventana de evaluación, lo que obliga a recurrir a métricas que reflejen el comportamiento del modelo sobre cada clase por separado y no sobre el agregado. Las métricas fundamentales en este contexto son la precisión, que mide la fracción de positivos predichos que son verdaderamente positivos, y la sensibilidad o recall, que mide la fracción de positivos reales que el modelo logra recuperar.
+ 
+Para evaluar el rendimiento de forma independiente del umbral de decisión se utiliza la curva ROC, que grafica la tasa de verdaderos positivos contra la tasa de falsos positivos a lo largo de todos los umbrales posibles, junto con su área bajo la curva o AUC-ROC \cite{fawcett2006introduction}. Un valor de AUC-ROC cercano a uno indica que el modelo asigna sistemáticamente puntajes más altos a los casos positivos que a los negativos, con independencia del umbral elegido para la decisión final. En el presente trabajo se priorizan recall y AUC-ROC como métricas de evaluación, dado que el costo operativo de no detectar un usuario que entra en churn de comunicación supera al de generar una activación de re-engagement innecesaria.
+ 
+ 
+
+% =============================================================================
+\section{Metodología}
+% =============================================================================
+ 
+\subsection{Dataset y caso de estudio}
+La validación empírica del modelo se realiza sobre el dataset público \textit{E-commerce Multichannel Direct Messaging 2021-2023}, publicado por Michael Kechinov en Kaggle bajo licencia Community Data License Agreement. El dataset contiene aproximadamente 708 millones de registros de mensajes enviados por una empresa de e-commerce de tamaño mediano durante un período de dos años, recopilados mediante la plataforma REES46 CDP. Cada registro representa un mensaje individual enviado a un cliente e incluye el canal de envío, el tipo de campaña (\textit{bulk}, \textit{trigger} o transaccional), los \textit{timestamps} de envío y de cada interacción posterior, y variables binarias de resultado que registran apertura, \textit{click}, compra atribuida, rebote, queja por \textit{spam}, bloqueo y desuscripción. El dataset comprende 16,8 millones de identificadores de cliente únicos como destinatarios de mensajes, de los cuales 9,9 millones presentan al menos un mensaje recibido durante la ventana de evaluación y constituyen la población evaluable. Se complementa con tres archivos auxiliares: metadata de campañas, fecha de primera compra por cliente y calendario de eventos comerciales relevantes para el período analizado.
+
+Los canales con mayor representación son \textit{email} y \textit{mobile push}, que concentran la totalidad del volumen significativo de mensajería en el dataset. El canal in-app, que forma parte del concepto teórico de \textit{churn} de comunicación tal como se introduce en la sección~I, no se encuentra disponible en datasets públicos con la granularidad de eventos requerida para este trabajo. La metodología se diseña entonces sobre los dos canales de mayor volumen, manteniendo una estructura extensible que permitiría incorporar un tercer canal de mensajería sin alterar el \textit{pipeline} de procesamiento ni la definición operativa del \textit{target}.
+ 
+\subsection{Definición del target y partición temporal}
+La predicción de \textit{churn} de comunicación requiere una definición operativa que distinga el cese de interacción con los canales de mensajería del cese de actividad en la plataforma. Para este trabajo, el \textit{target} se define a nivel de usuario sobre una ventana temporal de evaluación: un usuario recibe la etiqueta de \textit{churn} de comunicación si durante esa ventana fue alcanzado por al menos un mensaje en cualquiera de los canales disponibles pero no registró ninguna apertura ni \textit{click} en ningún canal. Los usuarios que abrieron o clickearon al menos un mensaje durante la ventana de evaluación reciben la etiqueta complementaria, y los usuarios que no recibieron ningún mensaje en ese período se excluyen del análisis por no resultar informativos respecto del fenómeno estudiado.
+ 
+La partición de los datos sigue un esquema temporal estricto en lugar de aleatorio, con el objetivo de evitar fugas de información futura hacia el conjunto de entrenamiento. Los primeros dieciocho meses del dataset constituyen el período de observación, sobre el cual se construyen las \textit{features} comportamentales de cada usuario, y los últimos seis meses constituyen el período de evaluación, sobre el cual se determina el \textit{target}. Esta separación garantiza que el modelo nunca observa información proveniente del período en el que se define la variable a predecir, replicando las condiciones de despliegue en un entorno CRM real en el que las \textit{features} se calculan sobre el pasado y la predicción opera sobre el futuro.
+ 
+\subsection{Ingeniería de features}
+A partir del período de observación se construye un vector de \textit{features} por usuario que combina señales comportamentales de cada canal individual con indicadores derivados que capturan la dinámica \textit{cross-channel} y la evolución temporal reciente. Para cada canal se calculan métricas de respuesta agregada (tasa total de apertura y de \textit{click}), métricas de respuesta reciente (tasa de apertura sobre los últimos treinta y sesenta días del período de observación), métricas de recencia (días transcurridos desde el último \textit{open} y desde el último \textit{click}), métricas de volumen (cantidad de mensajes recibidos) y métricas de fricción (cantidades de rebotes duros, rebotes blandos, desuscripciones y quejas por \textit{spam}). Adicionalmente, para cada usuario se computa la cantidad de compras atribuidas a la interacción con mensajería.
+ 
+El bloque de \textit{features cross-channel} incorpora la cantidad de canales distintos en los que el usuario abrió al menos un mensaje, la diferencia entre las tasas de apertura por canal y el ratio entre la actividad de los últimos treinta días y el promedio histórico, indicador diseñado para detectar caídas recientes en el \textit{engagement} comunicacional. A estas \textit{features} se suman dos descriptores del contexto de campaña, derivados del cruce con la metadata de campañas: la proporción de mensajes de tipo \textit{trigger} respecto del total y la proporción de mensajes con elementos de personalización. Finalmente, se incorpora la antigüedad del cliente, medida como la cantidad de días transcurridos desde la primera compra registrada hasta el cierre del período de observación. El conjunto de \textit{features} construido se persiste en disco para evitar recálculos en iteraciones sucesivas del experimento.
+ 
+\subsection{Modelos, tratamiento del desbalance y protocolo de evaluación}
+Se entrenan tres modelos de clasificación: una regresión logística que cumple el rol de \textit{baseline} interpretable, un Random Forest y un XGBoost como modelos principales basados en ensambles de árboles. La selección obedece a la cobertura conceptual desarrollada en el marco teórico y a la comparabilidad con la literatura de predicción de \textit{churn}, que reporta consistentemente rendimientos competitivos para los modelos de ensamble sobre datos tabulares \cite{brito2024framework,lalwani2022customer}. Las \textit{features} numéricas se estandarizan únicamente para el caso de la regresión logística, mientras que los modelos basados en árboles se entrenan sobre las \textit{features} originales, dado que no requieren escalado previo.
+ 
+El tratamiento del desbalance se aplica condicionalmente a la proporción observada de la clase positiva. Si la frecuencia de \textit{churn} de comunicación sobre el conjunto de entrenamiento resulta inferior al veinte por ciento, se aplica sobre-muestreo sintético mediante SMOTE \cite{chawla2002smote} de manera exclusiva sobre el conjunto de entrenamiento, preservando la distribución original en el conjunto de prueba para que las métricas reflejen la prevalencia real del fenómeno. Para Random Forest y XGBoost se realiza una búsqueda de hiperparámetros sobre una grilla acotada, optimizando AUC-ROC mediante validación cruzada estratificada de cinco pliegues. La regresión logística se entrena con regularización por defecto sin búsqueda adicional, en su carácter de \textit{baseline}.
+ 
+La evaluación de cada modelo se realiza sobre el conjunto de prueba, definido por la partición temporal descripta previamente, y reporta cinco métricas: AUC-ROC, precisión, \textit{recall}, F1-score y la matriz de confusión asociada al umbral de decisión por defecto. Adicionalmente, para Random Forest y XGBoost se construyen gráficos de importancia de \textit{features} que permiten interpretar qué señales comportamentales resultan más relevantes en la predicción del \textit{churn} de comunicación. Los tres modelos se comparan en una tabla resumen que sintetiza el rendimiento sobre las métricas señaladas.
+% =============================================================================
+% =============================================================================
+\section{ANÁLISIS Y RESULTADOS}
+% =============================================================================
+
+\subsection{Configuración experimental}
+La aplicación del \textit{pipeline} descripto en la sección~IV sobre el dataset
+completo identificó 9.906.011 usuarios con al menos un mensaje recibido
+durante la ventana de evaluación. Sobre esa población se aplicó una
+partición estratificada con proporción ochenta veinte, preservando la
+prevalencia del \textit{target} en ambos subconjuntos. La partición
+resultante contiene 7.924.808 usuarios de entrenamiento y 1.981.203
+usuarios de prueba.
+
+La prevalencia observada de la clase positiva alcanzó el cincuenta y siete
+por ciento sobre ambos subconjuntos. Esta distribución indica que sobre
+la población alcanzada por mensajería durante la ventana de evaluación
+la mayoría de los usuarios no registró ninguna apertura ni \textit{click}
+en ningún canal. El criterio operacional definido en la sección~IV.D
+estableció la activación de sobre-muestreo sintético mediante SMOTE
+\cite{chawla2002smote} únicamente cuando la prevalencia de la clase
+positiva resultara inferior al veinte por ciento. Dado que la condición
+no se cumplió, el \textit{pipeline} entrenó los tres modelos sobre la
+distribución original sin aplicar sobre-muestreo.
+
+La búsqueda de hiperparámetros para Random Forest y XGBoost se ejecutó
+mediante validación cruzada estratificada de cinco pliegues con veinte
+iteraciones de muestreo aleatorio sobre el espacio de hiperparámetros,
+optimizando AUC-ROC. La búsqueda operó sobre un subconjunto estratificado
+de 500.000 usuarios extraído del conjunto de entrenamiento, y la
+configuración ganadora de cada modelo se reajustó luego sobre el conjunto
+de entrenamiento completo de manera que el modelo final aprovechara la
+totalidad de los datos disponibles. La regresión logística se entrenó
+directamente sobre el conjunto completo con regularización por defecto,
+en su carácter de \textit{baseline} interpretable.
+
+\subsection{Comparación de modelos}
+Cada modelo se evaluó sobre el conjunto de prueba con el umbral de
+decisión que maximiza F1. Para cuantificar la incertidumbre de las
+métricas se aplicó \textit{bootstrap} con doscientas iteraciones sobre
+el conjunto de prueba, reportando intervalos de confianza al noventa y
+cinco por ciento por el método del percentil. La Tabla~\ref{tab:resultados}
+sintetiza los resultados.
+
+\begin{table*}[t]
+\centering
+\caption{Comparación de modelos sobre el conjunto de prueba
+(1.981.203 usuarios) en el umbral que maximiza F1. Intervalos de
+confianza al noventa y cinco por ciento por \textit{bootstrap}
+(doscientas iteraciones).}
+\label{tab:resultados}
+\small
+\begin{tabular}{lcccccc}
+\hline
+Modelo & AUC-ROC & PR-AUC & F1 & Precision & Recall & Umbral \\
+\hline
+Regresión logística & 0,771 [0,771; 0,772] & 0,773 [0,772; 0,774] & 0,791 [0,790; 0,791] & 0,675 [0,674; 0,675] & 0,954 [0,954; 0,955] & 0,448 \\
+Random Forest       & \textbf{0,807} [0,806; 0,808] & \textbf{0,821} [0,821; 0,822] & \textbf{0,804} [0,803; 0,804] & 0,701 [0,700; 0,701] & 0,943 [0,942; 0,943] & 0,416 \\
+XGBoost             & 0,806 [0,805; 0,806] & 0,820 [0,819; 0,820] & 0,803 [0,803; 0,804] & 0,698 [0,698; 0,699] & 0,946 [0,945; 0,946] & 0,868 \\
+\hline
+\end{tabular}
+\end{table*}
+
+Random Forest obtuvo el mejor desempeño en AUC-ROC, con una mejora de
+0,036 puntos sobre la regresión logística, y se posiciona como modelo
+ganador bajo el criterio de evaluación definido en la sección~IV.D.
+XGBoost obtuvo métricas estadísticamente indistinguibles de Random
+Forest, con una diferencia en AUC-ROC del orden del milésimo, dentro
+del rango de variabilidad estimado por \textit{bootstrap}. La brecha
+sobre la regresión logística confirma el patrón consistentemente
+reportado en la literatura de \textit{churn} sobre datos tabulares,
+en el que los ensambles de árboles superan a los modelos lineales por
+márgenes del orden de las décimas en AUC-ROC
+\cite{brito2024framework,lalwani2022customer}.
+
+El \textit{recall} de los tres modelos se ubica por encima de 0,94. Este
+comportamiento es coherente con el carácter mayoritario de la clase
+positiva sobre la población evaluada: el umbral que maximiza F1 sesga
+las predicciones hacia la clase predominante, recuperando la mayor parte
+de los positivos a costa de una precisión moderada cercana a 0,70. La
+asimetría es consistente con el enfoque del trabajo, en el que el costo
+operativo de no detectar un usuario en estado de \textit{churn} de
+comunicación supera al costo de generar una activación de
+\textit{re-engagement} innecesaria.
+
+Las curvas ROC y \textit{Precision-Recall} comparadas para los tres
+modelos se muestran en la Figura~\ref{fig:roc} y la Figura~\ref{fig:pr}
+respectivamente. Las matrices de confusión asociadas al umbral óptimo
+F1 de cada modelo se presentan en las
+Figuras~\ref{fig:conf_logreg},~\ref{fig:conf_rf} y~\ref{fig:conf_xgb}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/roc_curves.png}
+\caption{Curvas ROC sobre el conjunto de prueba para los tres modelos.}
+\label{fig:roc}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/pr_curves.png}
+\caption{Curvas \textit{Precision-Recall} sobre el conjunto de prueba.}
+\label{fig:pr}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/confusion_logreg.png}
+\caption{Matriz de confusión de regresión logística con umbral óptimo F1.}
+\label{fig:conf_logreg}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/confusion_rf.png}
+\caption{Matriz de confusión de Random Forest con umbral óptimo F1.}
+\label{fig:conf_rf}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/confusion_xgb.png}
+\caption{Matriz de confusión de XGBoost con umbral óptimo F1.}
+\label{fig:conf_xgb}
+\end{figure}
+
+\subsection{Importancia de variables}
+La Figura~\ref{fig:fi_rf} y la Figura~\ref{fig:fi_xgb} muestran la
+importancia relativa de cada \textit{feature} para Random Forest y
+XGBoost respectivamente. Random Forest reporta la importancia mediante
+la reducción media de impureza acumulada por cada variable a lo largo
+de todos los árboles del ensamble, mientras que XGBoost utiliza el
+aporte promedio de cada variable a la ganancia del modelo en sus
+particiones.
+
+% TODO REVISAR CONTRA FIGURAS REALES:
+% reemplazar este párrafo por una descripción específica de las
+% features que efectivamente quedaron en el top de las dos figuras.
+Ambos modelos coinciden en que las \textit{features} de recencia y las
+tasas de apertura agregadas por canal concentran la mayor proporción
+del poder predictivo, hallazgo coherente con la intuición de que el
+comportamiento más reciente del usuario es el indicador más confiable
+de su estado actual de \textit{engagement} comunicacional. Las
+\textit{features} de fricción, como las cantidades de rebotes y
+desuscripciones, ocupan posiciones intermedias, mientras que los
+descriptores de contexto de campaña y la antigüedad del cliente
+presentan una importancia relativa más baja.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/feature_importance_rf.png}
+\caption{Importancia de \textit{features} para Random Forest.}
+\label{fig:fi_rf}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/feature_importance_xgb.png}
+\caption{Importancia de \textit{features} para XGBoost.}
+\label{fig:fi_xgb}
+\end{figure}
+
+\subsection{Limitaciones empíricas}
+La aplicación del \textit{pipeline} sobre datos reales reveló tres
+limitaciones que conviene documentar para enmarcar correctamente la
+interpretación de los resultados.
+
+La primera corresponde a la prevalencia observada del \textit{target}.
+Sobre el dataset analizado la prevalencia alcanzó el cincuenta y siete
+por ciento, lo que vuelve menos urgente el problema del desbalance
+pero, simultáneamente, eleva el umbral que un modelo predictivo debe
+superar para aportar valor sobre una estrategia trivial de etiquetar a
+todos los usuarios como \textit{churners}. La diferencia entre el
+AUC-ROC del mejor modelo, 0,807, y el de un clasificador aleatorio,
+0,500, cuantifica precisamente ese aporte.
+
+La segunda corresponde a la calidad de los datos del canal
+\textit{mobile push}. Las \textit{features} derivadas de este canal
+presentan proporciones de valores faltantes elevadas, reflejo de que
+una fracción mayoritaria de los usuarios o bien no recibió mensajería
+\textit{push} o bien no registró interacciones suficientes para que
+las métricas de tasa fueran computables. La imputación con la mediana
+del subconjunto observado introduce un sesgo conocido que conviene
+tener presente en cualquier interpretación causal de la importancia
+de variables asociadas a ese canal.
+
+La tercera afecta a la \textit{feature} de antigüedad del cliente. El
+archivo auxiliar de fechas de primera compra cubre un período que se
+inicia con posterioridad al corte de la ventana de observación, de
+modo que una fracción mayoritaria de los usuarios no tiene fecha
+registrada dentro del rango utilizado y la fracción restante presenta
+valores numéricos negativos. La \textit{feature} conserva poder
+predictivo binario en el sentido de que distinguir entre usuarios
+con fecha registrada y sin ella aporta información, pero el valor
+numérico de antigüedad no admite la interpretación causal esperada.
+Los modelos basados en árboles absorben este patrón sin requerir
+transformación adicional, pero la lectura cualitativa de esta variable
+en el análisis de importancia debe matizarse.
+
+Los intervalos de confianza reportados en la Tabla~\ref{tab:resultados}
+resultan estrechos por el tamaño del conjunto de prueba, cercano a dos
+millones de usuarios. La variabilidad real entre re-entrenamientos del
+modelo, no capturada por el \textit{bootstrap} sobre el conjunto de
+prueba, proviene fundamentalmente de la búsqueda de hiperparámetros y
+del muestreo aleatorio interno de cada algoritmo de ensamble.% =============================================================================
+
+% =============================================================================
+\section{CONCLUSIÓN}
+% =============================================================================
+
+Este trabajo propuso un modelo de clasificación supervisada basado en
+algoritmos de \textit{ensemble} para predecir el \textit{churn} de
+comunicación en plataformas CRM multicanal, un fenómeno definido como
+el cese de interacción con los canales de mensajería sin cancelación
+de cuenta, y que hasta la fecha no había sido tratado de forma
+específica en la literatura académica.
+
+La investigación resultó exitosa en tanto logró formalizar el
+\textit{churn} de comunicación como un objeto de estudio diferenciado,
+establecer un marco metodológico viable apoyado en métricas apropiadas
+para el desbalance de clases característico del problema, y definir un
+pipeline predictivo integrable en plataformas CRM operativas. Entre
+las limitaciones encontradas se destacan la escasez de datasets
+públicos que combinen señales de los tres canales de forma integrada,
+la dificultad de validar el modelo en condiciones reales de producción
+sin un entorno CRM de prueba, y la necesidad de equilibrar sensibilidad
+y precisión para que el sistema no genere fatiga por falsos positivos
+ni deje escapar casos reales de desenganche.
+
+Como líneas de trabajo futuro se contempla la validación del modelo en
+un entorno CRM operativo, la incorporación de señales temporales
+adicionales como el tiempo entre interacciones y los patrones de
+respuesta a lo largo del día, la exploración de arquitecturas de
+\textit{deep learning} para datos secuenciales, y la medición
+comparativa del desempeño del modelo predictivo frente a los enfoques
+tradicionales de segmentación estática, con el objetivo de cuantificar
+el beneficio operativo y económico de reemplazar reglas fijas por
+predicciones dinámicas.
+
+% ---------------------------------------------------------------------------
+\bibliographystyle{IEEEtran}
+\bibliography{referencias}
+
+\end{document}

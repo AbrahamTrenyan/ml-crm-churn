@@ -1,0 +1,37 @@
+{
+  "seed": 42,
+  "ventana_observacion_meses": 18,
+  "ventana_evaluacion_meses": 6,
+  "smote_threshold": 0.2,
+  "random_search_n_iter": 20,
+  "cv_folds": 5,
+  "bootstrap_iters": 200,
+  "_comentario_bootstrap": "Reducido de 1000 → 200 (D10) tras observar que el test set tiene 1.98M filas: 1000 iters × 6 escenarios (3 modelos × 2 thresholds) × 5 métricas sobre 1.98M samples proyectaba 60-90 min de bootstrap. 200 iters dan CI 95% por percentil con resolución estadística más que suficiente.",
+  "chunksize_messages": 500000,
+  "subsample_busqueda": 500000,
+  "_comentario_subsample": "Tamaño del subsample estratificado usado SOLO para la búsqueda de hiperparámetros en Fase 3 (D8 en PROGRESO.md). El modelo final se refitea sobre el train completo (~7.9M).",
+  "canales_objetivo": [
+    "email",
+    "mobile_push"
+  ],
+  "dataset_md5": {
+    "messages.csv.gz": "95fa332ef970a50c6c18a916b79f99af"
+  },
+  "ventana_fechas": {
+    "_comentario": "Calculado en Fase 1 desde min/max de sent_at del dataset full (messages.csv.gz). Ver D1 y D5 en PROGRESO.md.",
+    "min_sent_at": "2021-04-30T00:02:04",
+    "max_sent_at": "2023-04-23T23:59:29",
+    "corte_observacion": "2021-04-23T23:59:29",
+    "corte_evaluacion": "2022-10-23T23:59:29"
+  },
+  "paquetes": {
+    "python": "3.11.4",
+    "pandas": "3.0.3",
+    "numpy": "2.4.4",
+    "scikit-learn": "1.8.0",
+    "xgboost": "3.2.0",
+    "imbalanced-learn": "0.14.1",
+    "matplotlib": "3.10.9",
+    "pyarrow": "24.0.0"
+  }
+}
