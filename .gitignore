@@ -33,8 +33,10 @@ vendor/
 claude.md
 PROGRESO.md
 
-# --- PDFs compilados (el fuente .tex ya está en el repo) ---
+# --- PDFs compilados intermedios ---
 *.pdf
+# Excepción: el paper final sí se versiona
+!Trenyan_V4.pdf
 
 # --- Editor / OS ---
 .DS_Store
