@@ -50,8 +50,9 @@ paper_en.tex
 
 # --- PDFs compilados intermedios ---
 *.pdf
-# Excepción: el paper final sí se versiona
+# Excepción: los papers finales sí se versionan
 !Communication-Churn-Prediction-in-Multichannel-CRM-Platforms.pdf
+!Prediccion-de-Churn-de-Comunicacion-en-Plataformas-CRM-Multicanal.pdf
 
 # --- Editor / OS ---
 .DS_Store

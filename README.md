@@ -2,7 +2,7 @@
 
 Machine Learning pipeline to predict which users will stop interacting with multichannel messaging campaigns (email and mobile push) at a mid-sized e-commerce retailer.
 
-Paper: [_"Applying Machine Learning to Communication Churn Prediction in Multichannel CRM Platforms: Email, Push, and In-App"_](Communication-Churn-Prediction-in-Multichannel-CRM-Platforms.pdf) — Trenyan, A. (2026).
+Paper: [_"Applying Machine Learning to Communication Churn Prediction in Multichannel CRM Platforms: Email, Push, and In-App"_](Communication-Churn-Prediction-in-Multichannel-CRM-Platforms.pdf) — Trenyan, A. (2026). Also available in [Spanish](Prediccion-de-Churn-de-Comunicacion-en-Plataformas-CRM-Multicanal.pdf).
 
 ---
 
@@ -47,6 +47,7 @@ ml-crm-churn/
 ├── requirements.txt        # Python dependencies
 ├── referencias.bib         # BibTeX bibliography of the paper
 ├── Communication-Churn-Prediction-in-Multichannel-CRM-Platforms.pdf
+├── Prediccion-de-Churn-de-Comunicacion-en-Plataformas-CRM-Multicanal.pdf
 ├── src/
 │   ├── data.py             # Phase 1: loading and validation
 │   ├── features.py         # Phase 2: feature engineering
