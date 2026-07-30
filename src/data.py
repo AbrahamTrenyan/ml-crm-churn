@@ -1,21 +1,20 @@
-"""Fase 1 del pipeline: carga y validación de los CSVs.
+"""Pipeline Phase 1: CSV loading and validation.
 
-Responsabilidades:
-- Verificar la integridad de `messages.csv.gz` (dataset completo, 24 meses)
-  por MD5.
-- Cargar los 4 CSVs con dtypes explícitos y conversión de booleanos 't'/'f'.
-- Calcular las ventanas temporales (D1 en PROGRESO.md): 18 meses de observación
-  y 6 meses de evaluación, ambos contados hacia atrás desde `max(sent_at)`.
-- Persistir las fechas calculadas en `config.json::ventana_fechas`.
-- Emitir un checkpoint con filas, usuarios únicos y rangos temporales.
+Responsibilities:
+- Verify the integrity of `messages.csv.gz` (full dataset, 24 months) via MD5.
+- Load the 4 CSVs with explicit dtypes and 't'/'f' boolean conversion.
+- Compute the time windows (decision D1): 18 months of observation and
+  6 months of evaluation, both counted backwards from `max(sent_at)`.
+- Persist the computed dates in `config.json::window_dates`.
+- Emit a checkpoint with rows, unique users and time ranges.
 
-DECISIÓN (D5 en PROGRESO.md): se trabaja con `messages.csv.gz` (21.5 GB
-comprimido, 24 meses, ~721M filas) en lugar de `messages-demo.csv` (10M filas,
-46 días). El archivo se procesa SIEMPRE desde gzip por streaming/chunks; no
-se descomprime a disco porque el plano ocuparía ~150 GB y solo hay ~70 GB
-libres.
+DECISION (D5): the pipeline works with `messages.csv.gz` (21.5 GB
+compressed, 24 months, ~721M rows) instead of `messages-demo.csv` (10M rows,
+46 days). The file is ALWAYS processed from gzip via streaming/chunks; it is
+never decompressed to disk because the plain file would take ~150 GB while
+only ~70 GB are free.
 
-Ejecutar standalone:
+Run standalone:
     python -m src.data
 """
 from __future__ import annotations
@@ -27,25 +26,24 @@ from typing import Iterator
 import pandas as pd
 
 from src.logging_utils import (
-    DIR_DATA,
-    cargar_config,
-    configurar_logger,
-    guardar_config,
-    imprimir_checkpoint,
+    DATA_DIR,
+    load_config,
+    print_checkpoint,
+    save_config,
+    setup_logger,
 )
 
 # ----------------------------------------------------------------------------
-# Esquema de messages.csv.gz
+# messages.csv.gz schema
 # ----------------------------------------------------------------------------
 
-# DECISIÓN: `client_id` se almacena como int64. Los IDs reales del dataset son
-# ~1.5e18, muy por encima del máximo de int32 (~2.1e9). Se conserva la regla
-# de tipado explícito de CLAUDE.md, pero se sube de int32 a int64 por el rango
-# observado en el dataset real.
-DTYPES_MENSAJES: dict[str, str] = {
+# DECISION: `client_id` is stored as int64. Real IDs in the dataset are
+# ~1.5e18, far above the int32 maximum (~2.1e9). The explicit typing rule is
+# kept, but the dtype is bumped from int32 to int64 given the observed range.
+MESSAGES_DTYPES: dict[str, str] = {
     "id": "int64",
     "message_id": "string",
-    "campaign_id": "Int32",  # nullable: hay registros transaccionales sin campaña
+    "campaign_id": "Int32",  # nullable: transactional records have no campaign
     "message_type": "category",
     "client_id": "int64",
     "channel": "category",
@@ -55,9 +53,9 @@ DTYPES_MENSAJES: dict[str, str] = {
     "stream": "category",
 }
 
-# Las 8 columnas booleanas vienen como 't'/'f' en el CSV. Se convierten a int8
-# en post-procesamiento por chunk (más rápido que un converter en read_csv).
-COLUMNAS_BOOLEANAS: list[str] = [
+# The 8 boolean columns come as 't'/'f' in the CSV. They are converted to
+# int8 in per-chunk post-processing (faster than a converter in read_csv).
+BOOLEAN_COLUMNS: list[str] = [
     "is_opened",
     "is_clicked",
     "is_unsubscribed",
@@ -68,8 +66,8 @@ COLUMNAS_BOOLEANAS: list[str] = [
     "is_purchased",
 ]
 
-# Todas las columnas tipo timestamp del archivo de mensajes.
-COLUMNAS_FECHAS_MENSAJES: list[str] = [
+# All timestamp-like columns in the messages file.
+MESSAGES_DATE_COLUMNS: list[str] = [
     "date",
     "sent_at",
     "opened_first_time_at",
@@ -86,18 +84,18 @@ COLUMNAS_FECHAS_MENSAJES: list[str] = [
     "updated_at",
 ]
 
-# Subset de columnas usado por Fase 1 para validar integridad y calcular
-# ventanas temporales. Se leen solo estas 3 para no cargar 32 columnas × 721M
-# filas a memoria.
-COLUMNAS_VALIDACION_MINIMA: list[str] = ["client_id", "channel", "sent_at"]
+# Column subset used by Phase 1 to validate integrity and compute the time
+# windows. Only these 3 are read to avoid loading 32 columns x 721M rows
+# into memory.
+MINIMAL_VALIDATION_COLUMNS: list[str] = ["client_id", "channel", "sent_at"]
 
-NOMBRE_ARCHIVO_MENSAJES = "messages.csv.gz"
+MESSAGES_FILENAME = "messages.csv.gz"
 
-# DECISIÓN: el threshold defensivo se baja a 400M filas (paper reporta ~721M en
-# bruto, pero queremos un guardarraíl conservador que solo dispare si la
-# descarga quedó truncada). Si la descarga del dataset full quedó parcial,
-# Fase 1 corta y avisa.
-FILAS_ESPERADAS_MENSAJES = 400_000_000
+# DECISION: the defensive threshold is set to 400M rows (the paper reports
+# ~721M raw, but we want a conservative guardrail that only fires if the
+# download was truncated). If the full dataset download is partial, Phase 1
+# aborts and warns.
+EXPECTED_MESSAGES_ROWS = 400_000_000
 
 
 # ----------------------------------------------------------------------------
@@ -105,41 +103,41 @@ FILAS_ESPERADAS_MENSAJES = 400_000_000
 # ----------------------------------------------------------------------------
 
 
-def _convertir_booleanos_tf(df: pd.DataFrame, columnas: list[str]) -> pd.DataFrame:
-    """Convierte columnas 't'/'f' a int8 (1/0). Trata NaN como 0."""
-    for col in columnas:
+def _convert_tf_booleans(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Converts 't'/'f' columns to int8 (1/0). NaN is treated as 0."""
+    for col in columns:
         if col in df.columns:
-            # Comparación vectorizada: cualquier valor distinto de 't' (incluido NaN) -> 0.
+            # Vectorized comparison: any value other than 't' (incl. NaN) -> 0.
             df[col] = (df[col] == "t").astype("int8")
     return df
 
 
-def _filtrar_dtypes(columnas: list[str] | None) -> dict[str, str]:
-    """Devuelve el subset de DTYPES_MENSAJES aplicable a las columnas pedidas."""
-    if columnas is None:
-        return dict(DTYPES_MENSAJES)
-    return {k: v for k, v in DTYPES_MENSAJES.items() if k in columnas}
+def _filter_dtypes(columns: list[str] | None) -> dict[str, str]:
+    """Returns the subset of MESSAGES_DTYPES applicable to the requested columns."""
+    if columns is None:
+        return dict(MESSAGES_DTYPES)
+    return {k: v for k, v in MESSAGES_DTYPES.items() if k in columns}
 
 
-def _filtrar_parse_dates(columnas: list[str] | None) -> list[str]:
-    """Devuelve solo las columnas de fecha que están en `columnas`."""
-    if columnas is None:
-        return list(COLUMNAS_FECHAS_MENSAJES)
-    return [c for c in COLUMNAS_FECHAS_MENSAJES if c in columnas]
+def _filter_parse_dates(columns: list[str] | None) -> list[str]:
+    """Returns only the date columns present in `columns`."""
+    if columns is None:
+        return list(MESSAGES_DATE_COLUMNS)
+    return [c for c in MESSAGES_DATE_COLUMNS if c in columns]
 
 
-def _kwargs_lectura_mensajes(columnas: list[str] | None) -> dict:
-    """Arma los kwargs comunes para `pd.read_csv` sobre `messages.csv.gz`."""
-    ruta = DIR_DATA / NOMBRE_ARCHIVO_MENSAJES
-    dtype_map = _filtrar_dtypes(columnas)
-    fechas = _filtrar_parse_dates(columnas)
-    # DECISIÓN: pasamos `compression='gzip'` explícito para no depender de la
-    # inferencia por extensión (también deja al lector documentado).
+def _messages_read_kwargs(columns: list[str] | None) -> dict:
+    """Builds the common kwargs for `pd.read_csv` over `messages.csv.gz`."""
+    path = DATA_DIR / MESSAGES_FILENAME
+    dtype_map = _filter_dtypes(columns)
+    dates = _filter_parse_dates(columns)
+    # DECISION: `compression='gzip'` is passed explicitly to avoid relying on
+    # extension-based inference (it also documents the reader).
     return {
-        "filepath_or_buffer": ruta,
-        "usecols": columnas,
+        "filepath_or_buffer": path,
+        "usecols": columns,
         "dtype": dtype_map,
-        "parse_dates": fechas if fechas else None,
+        "parse_dates": dates if dates else None,
         "compression": "gzip",
     }
 
@@ -149,83 +147,83 @@ def _kwargs_lectura_mensajes(columnas: list[str] | None) -> dict:
 # ----------------------------------------------------------------------------
 
 
-def cargar_mensajes(
-    columnas: list[str] | None = None,
+def load_messages(
+    columns: list[str] | None = None,
     chunksize: int | None = None,
 ) -> pd.DataFrame:
-    """Carga `messages.csv.gz` con dtypes/fechas/booleanos resueltos.
+    """Loads `messages.csv.gz` with dtypes/dates/booleans resolved.
 
     Args:
-        columnas: subset de columnas a leer (`usecols`). Para subsets chicos
-            (3-4 columnas) esto sigue siendo viable. Para leer las 32 columnas
-            completas usar `iterar_mensajes()`.
-        chunksize: si está dado, lee en chunks y concatena al final. Pensado
-            para subsets que sí caben en RAM una vez concatenados.
+        columns: column subset to read (`usecols`). For small subsets
+            (3-4 columns) this remains viable. To read the full 32 columns
+            use `iter_messages()`.
+        chunksize: if given, reads in chunks and concatenates at the end.
+            Meant for subsets that do fit in RAM once concatenated.
 
     Returns:
-        DataFrame con las columnas pedidas, fechas como datetime64 y
-        booleanos como int8.
+        DataFrame with the requested columns, dates as datetime64 and
+        booleans as int8.
 
     Raises:
-        RuntimeError: si se pide leer todas las columnas en un solo DataFrame.
-            El dataset completo descomprimido ronda los 100-150 GB y no entra
-            en RAM. Para ese caso usar `iterar_mensajes()`.
+        RuntimeError: if all columns are requested into a single DataFrame.
+            The full decompressed dataset is around 100-150 GB and does not
+            fit in RAM. Use `iter_messages()` for that case.
     """
-    if columnas is None:
+    if columns is None:
         raise RuntimeError(
-            "cargar_mensajes() no admite leer todas las columnas a memoria "
-            "porque `messages.csv.gz` descomprime a ~100-150 GB. "
-            "Usar `iterar_mensajes(columnas=[...])` y agregar por chunks."
+            "load_messages() does not support reading all columns into memory "
+            "because `messages.csv.gz` decompresses to ~100-150 GB. "
+            "Use `iter_messages(columns=[...])` and aggregate per chunk."
         )
 
-    kwargs = _kwargs_lectura_mensajes(columnas)
-    bools = [c for c in COLUMNAS_BOOLEANAS if c in columnas]
+    kwargs = _messages_read_kwargs(columns)
+    bools = [c for c in BOOLEAN_COLUMNS if c in columns]
 
     if chunksize is None:
         df = pd.read_csv(**kwargs)
-        return _convertir_booleanos_tf(df, bools)
+        return _convert_tf_booleans(df, bools)
 
-    partes: list[pd.DataFrame] = []
+    parts: list[pd.DataFrame] = []
     for chunk in pd.read_csv(chunksize=chunksize, **kwargs):
-        partes.append(_convertir_booleanos_tf(chunk, bools))
-    return pd.concat(partes, ignore_index=True)
+        parts.append(_convert_tf_booleans(chunk, bools))
+    return pd.concat(parts, ignore_index=True)
 
 
-def iterar_mensajes(
-    columnas: list[str],
+def iter_messages(
+    columns: list[str],
     chunksize: int | None = None,
 ) -> Iterator[pd.DataFrame]:
-    """Itera `messages.csv.gz` en chunks, con dtypes/fechas/booleanos resueltos.
+    """Iterates `messages.csv.gz` in chunks, with dtypes/dates/booleans resolved.
 
-    Pensado para Fase 1 (agregación de métricas globales sin acumular el
-    DataFrame entero) y Fase 2 (agregación por `client_id` incremental).
+    Meant for Phase 1 (aggregating global metrics without accumulating the
+    whole DataFrame) and Phase 2 (incremental aggregation by `client_id`).
 
     Args:
-        columnas: subset de columnas a leer. Requerido para que el consumidor
-            controle el ancho del DataFrame por chunk.
-        chunksize: filas por chunk. Si es `None`, se toma `chunksize_messages`
-            del `config.json`.
+        columns: column subset to read. Required so the consumer controls
+            the per-chunk DataFrame width.
+        chunksize: rows per chunk. If `None`, `chunksize_messages` from
+            `config.json` is used.
 
     Yields:
-        DataFrames de a lo sumo `chunksize` filas, con dtypes ya aplicados y
-        booleanos convertidos a int8.
+        DataFrames of at most `chunksize` rows, with dtypes applied and
+        booleans converted to int8.
     """
-    if not columnas:
-        raise ValueError("iterar_mensajes() requiere `columnas` no vacía.")
+    if not columns:
+        raise ValueError("iter_messages() requires a non-empty `columns`.")
 
     if chunksize is None:
-        chunksize = int(cargar_config().get("chunksize_messages", 500_000))
+        chunksize = int(load_config().get("chunksize_messages", 500_000))
 
-    kwargs = _kwargs_lectura_mensajes(columnas)
-    bools = [c for c in COLUMNAS_BOOLEANAS if c in columnas]
+    kwargs = _messages_read_kwargs(columns)
+    bools = [c for c in BOOLEAN_COLUMNS if c in columns]
     for chunk in pd.read_csv(chunksize=chunksize, **kwargs):
-        yield _convertir_booleanos_tf(chunk, bools)
+        yield _convert_tf_booleans(chunk, bools)
 
 
-def cargar_campaigns() -> pd.DataFrame:
-    """Carga `campaigns.csv` (~1.9k filas, sin presión de memoria)."""
+def load_campaigns() -> pd.DataFrame:
+    """Loads `campaigns.csv` (~1.9k rows, no memory pressure)."""
     return pd.read_csv(
-        DIR_DATA / "campaigns.csv",
+        DATA_DIR / "campaigns.csv",
         parse_dates=["started_at", "finished_at"],
         dtype={
             "id": "int32",
@@ -236,97 +234,98 @@ def cargar_campaigns() -> pd.DataFrame:
     )
 
 
-def cargar_primera_compra() -> pd.DataFrame:
-    """Carga `client_first_purchase_date.csv` (~1.85M filas).
+def load_first_purchase() -> pd.DataFrame:
+    """Loads `client_first_purchase_date.csv` (~1.85M rows).
 
-    Cubre el rango 2021-12-15 → 2023-12-14, consistente con la ventana del
-    dataset full. Se usa para la feature de antigüedad en Fase 2.
+    Covers the range 2021-12-15 -> 2023-12-14, consistent with the full
+    dataset window. Used for the tenure feature in Phase 2.
     """
     return pd.read_csv(
-        DIR_DATA / "client_first_purchase_date.csv",
+        DATA_DIR / "client_first_purchase_date.csv",
         parse_dates=["first_purchase_date"],
         dtype={"client_id": "int64"},
     )
 
 
-def cargar_holidays() -> pd.DataFrame:
-    """Carga `holidays.csv` (~47 filas, calendario comercial)."""
+def load_holidays() -> pd.DataFrame:
+    """Loads `holidays.csv` (~47 rows, commercial calendar)."""
     return pd.read_csv(
-        DIR_DATA / "holidays.csv",
+        DATA_DIR / "holidays.csv",
         parse_dates=["date"],
         dtype={"holiday": "category"},
     )
 
 
 # ----------------------------------------------------------------------------
-# Verificación MD5
+# MD5 verification
 # ----------------------------------------------------------------------------
 
 
-def verificar_md5_mensajes(logger) -> str:
-    """Calcula el MD5 de `messages.csv.gz` y lo compara con `config.json`.
+def verify_messages_md5(logger) -> str:
+    """Computes the MD5 of `messages.csv.gz` and compares it with `config.json`.
 
-    Si el config tiene un MD5 registrado y no coincide, emite warning pero no
-    aborta: puede ser una versión del dataset legítimamente distinta.
+    If the config has a recorded MD5 and it does not match, a warning is
+    emitted but the run is not aborted: it may be a legitimately different
+    version of the dataset.
     """
-    config = cargar_config()
-    md5_esperado = config.get("dataset_md5", {}).get(NOMBRE_ARCHIVO_MENSAJES)
+    config = load_config()
+    expected_md5 = config.get("dataset_md5", {}).get(MESSAGES_FILENAME)
 
-    ruta = DIR_DATA / NOMBRE_ARCHIVO_MENSAJES
+    path = DATA_DIR / MESSAGES_FILENAME
     hasher = hashlib.md5()
-    # Lectura en bloques de 8 MB: balance entre throughput y RAM. Sobre 21.5
-    # GB esto tarda ~30-60 s en SSD.
-    with ruta.open("rb") as f:
-        for bloque in iter(lambda: f.read(8 * 1024 * 1024), b""):
-            hasher.update(bloque)
-    md5_calculado = hasher.hexdigest()
+    # 8 MB block reads: balance between throughput and RAM. Over 21.5 GB
+    # this takes ~30-60 s on SSD.
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(8 * 1024 * 1024), b""):
+            hasher.update(block)
+    computed_md5 = hasher.hexdigest()
 
-    if md5_esperado is None:
-        logger.info("MD5 calculado (no había referencia previa): %s", md5_calculado)
-    elif md5_calculado == md5_esperado:
-        logger.info("MD5 verificado OK: %s", md5_calculado)
+    if expected_md5 is None:
+        logger.info("MD5 computed (no previous reference): %s", computed_md5)
+    elif computed_md5 == expected_md5:
+        logger.info("MD5 verified OK: %s", computed_md5)
     else:
         logger.warning(
-            "MD5 NO coincide. Esperado=%s | Calculado=%s. "
-            "El dataset puede haber cambiado; revisar antes de continuar.",
-            md5_esperado,
-            md5_calculado,
+            "MD5 does NOT match. Expected=%s | Computed=%s. "
+            "The dataset may have changed; review before continuing.",
+            expected_md5,
+            computed_md5,
         )
-    return md5_calculado
+    return computed_md5
 
 
 # ----------------------------------------------------------------------------
-# Agregación por chunks para Fase 1
+# Chunked aggregation for Phase 1
 # ----------------------------------------------------------------------------
 
 
-def recolectar_metricas_globales(logger) -> dict:
-    """Itera todo `messages.csv.gz` (3 columnas) y agrega métricas globales.
+def collect_global_metrics(logger) -> dict:
+    """Iterates all of `messages.csv.gz` (3 columns) and aggregates global metrics.
 
-    Esta función reemplaza el patrón anterior de "cargar todo a un DataFrame y
-    calcular sobre él". Sobre el dataset full eso explotaría la RAM. Acá se
-    acumula: min/max de `sent_at`, set de `client_id` únicos, sumatoria de
-    `channel.value_counts()` y conteo total de filas.
+    This function replaces the previous "load everything into a DataFrame
+    and compute over it" pattern. On the full dataset that would blow up
+    RAM. Here we accumulate: min/max of `sent_at`, set of unique
+    `client_id`, running sum of `channel.value_counts()` and total row count.
 
     Returns:
-        Dict con n_filas, n_usuarios, canales (dict canal -> conteo),
+        Dict with n_rows, n_users, channels (dict channel -> count),
         min_sent_at, max_sent_at.
     """
-    n_filas = 0
+    n_rows = 0
     n_chunks = 0
-    clientes_unicos: set[int] = set()
-    canales_acum = pd.Series(dtype="int64")
+    unique_clients: set[int] = set()
+    channels_acc = pd.Series(dtype="int64")
     min_dt: pd.Timestamp | None = None
     max_dt: pd.Timestamp | None = None
 
     t_iter = time.time()
-    for chunk in iterar_mensajes(columnas=COLUMNAS_VALIDACION_MINIMA):
+    for chunk in iter_messages(columns=MINIMAL_VALIDATION_COLUMNS):
         n_chunks += 1
-        n_filas += len(chunk)
-        clientes_unicos.update(chunk["client_id"].unique().tolist())
+        n_rows += len(chunk)
+        unique_clients.update(chunk["client_id"].unique().tolist())
 
-        conteo_chunk = chunk["channel"].value_counts()
-        canales_acum = canales_acum.add(conteo_chunk, fill_value=0)
+        chunk_counts = chunk["channel"].value_counts()
+        channels_acc = channels_acc.add(chunk_counts, fill_value=0)
 
         chunk_min = chunk["sent_at"].min()
         chunk_max = chunk["sent_at"].max()
@@ -335,182 +334,183 @@ def recolectar_metricas_globales(logger) -> dict:
         if pd.notna(chunk_max) and (max_dt is None or chunk_max > max_dt):
             max_dt = chunk_max
 
-        # Log cada 50 chunks (~25M filas con chunksize=500k) para no spammear.
+        # Log every 50 chunks (~25M rows with chunksize=500k) to avoid spam.
         if n_chunks % 50 == 0:
             elapsed = time.time() - t_iter
-            tasa = n_filas / max(elapsed, 1e-6) / 1_000_000
+            rate = n_rows / max(elapsed, 1e-6) / 1_000_000
             logger.info(
-                "  ... %d chunks, %d filas acumuladas (%.1f M filas/s)",
+                "  ... %d chunks, %d accumulated rows (%.1f M rows/s)",
                 n_chunks,
-                n_filas,
-                tasa,
+                n_rows,
+                rate,
             )
 
-    canales_dict = {str(k): int(v) for k, v in canales_acum.astype("int64").items()}
+    channels_dict = {str(k): int(v) for k, v in channels_acc.astype("int64").items()}
     return {
-        "n_filas": n_filas,
-        "n_usuarios": len(clientes_unicos),
-        "canales": canales_dict,
+        "n_rows": n_rows,
+        "n_users": len(unique_clients),
+        "channels": channels_dict,
         "min_sent_at": min_dt,
         "max_sent_at": max_dt,
     }
 
 
 # ----------------------------------------------------------------------------
-# Ventanas temporales (D1)
+# Time windows (D1)
 # ----------------------------------------------------------------------------
 
 
-def determinar_ventanas_temporales(
+def compute_time_windows(
     min_dt: pd.Timestamp, max_dt: pd.Timestamp, logger
 ) -> dict:
-    """Calcula `corte_observacion` y `corte_evaluacion` según D1.
+    """Computes `observation_cutoff` and `evaluation_cutoff` following D1.
 
-    Regla: contar hacia atrás desde `max(sent_at)`. Los últimos 6 meses son
-    la ventana de evaluación; los 18 meses anteriores, la ventana de
-    observación. Todo lo previo a esos 24 meses se descarta en Fase 2.
+    Rule: count backwards from `max(sent_at)`. The last 6 months are the
+    evaluation window; the 18 months before it, the observation window.
+    Everything prior to those 24 months is discarded in Phase 2.
     """
-    # DECISIÓN: ventanas fijas hacia atrás desde max(sent_at). 6m para evaluación,
-    # 18m previos para observación. Se descarta lo anterior. Decisión del usuario,
-    # ver D1 en PROGRESO.md. Garantiza ventanas exactas y consistentes con el
-    # horizonte de predicción declarado en el paper (sec. IV.B).
-    config = cargar_config()
-    meses_obs = config["ventana_observacion_meses"]
-    meses_eval = config["ventana_evaluacion_meses"]
+    # DECISION: fixed windows counted backwards from max(sent_at). 6m for
+    # evaluation, the previous 18m for observation. Anything earlier is
+    # discarded (D1). Guarantees exact windows consistent with the prediction
+    # horizon declared in the paper (sec. IV.B).
+    config = load_config()
+    obs_months = config["observation_window_months"]
+    eval_months = config["evaluation_window_months"]
 
-    corte_eval: pd.Timestamp = max_dt - pd.DateOffset(months=meses_eval)
-    corte_obs: pd.Timestamp = corte_eval - pd.DateOffset(months=meses_obs)
+    eval_cutoff: pd.Timestamp = max_dt - pd.DateOffset(months=eval_months)
+    obs_cutoff: pd.Timestamp = eval_cutoff - pd.DateOffset(months=obs_months)
 
-    logger.info("Rango temporal del dataset: %s -> %s", min_dt, max_dt)
-    logger.info("Corte de observación (inicio de la ventana): %s", corte_obs)
-    logger.info("Corte de evaluación  (inicio de la ventana): %s", corte_eval)
+    logger.info("Dataset time range: %s -> %s", min_dt, max_dt)
+    logger.info("Observation cutoff (window start): %s", obs_cutoff)
+    logger.info("Evaluation cutoff  (window start): %s", eval_cutoff)
 
     return {
         "min_sent_at": min_dt,
         "max_sent_at": max_dt,
-        "corte_observacion": corte_obs,
-        "corte_evaluacion": corte_eval,
+        "observation_cutoff": obs_cutoff,
+        "evaluation_cutoff": eval_cutoff,
     }
 
 
-def persistir_ventanas_en_config(ventanas: dict, md5_actual: str, logger) -> None:
-    """Escribe las fechas y el MD5 efectivo en `config.json`.
+def persist_windows_in_config(windows: dict, current_md5: str, logger) -> None:
+    """Writes the dates and the effective MD5 into `config.json`.
 
-    Limpia la entrada vieja `messages-demo.csv` del bloque `dataset_md5` y
-    deja una sola clave canónica `messages.csv.gz`.
+    Removes the old `messages-demo.csv` entry from the `dataset_md5` block
+    and leaves a single canonical `messages.csv.gz` key.
     """
-    config = cargar_config()
-    config["ventana_fechas"] = {
-        "_comentario": (
-            "Calculado en Fase 1 desde min/max de sent_at del dataset full "
-            "(messages.csv.gz). Ver D1 y D5 en PROGRESO.md."
+    config = load_config()
+    config["window_dates"] = {
+        "_comment": (
+            "Computed in Phase 1 from min/max of sent_at over the full "
+            "dataset (messages.csv.gz). See decisions D1 and D5."
         ),
-        "min_sent_at": ventanas["min_sent_at"].isoformat(),
-        "max_sent_at": ventanas["max_sent_at"].isoformat(),
-        "corte_observacion": ventanas["corte_observacion"].isoformat(),
-        "corte_evaluacion": ventanas["corte_evaluacion"].isoformat(),
+        "min_sent_at": windows["min_sent_at"].isoformat(),
+        "max_sent_at": windows["max_sent_at"].isoformat(),
+        "observation_cutoff": windows["observation_cutoff"].isoformat(),
+        "evaluation_cutoff": windows["evaluation_cutoff"].isoformat(),
     }
     md5_block = config.setdefault("dataset_md5", {})
     md5_block.pop("messages-demo.csv", None)
-    md5_block[NOMBRE_ARCHIVO_MENSAJES] = md5_actual
-    guardar_config(config)
-    logger.info("Fechas y MD5 persistidos en config.json")
+    md5_block[MESSAGES_FILENAME] = current_md5
+    save_config(config)
+    logger.info("Dates and MD5 persisted in config.json")
 
 
 # ----------------------------------------------------------------------------
-# Validaciones
+# Validations
 # ----------------------------------------------------------------------------
 
 
-def validar_metricas(metricas: dict, logger) -> None:
-    """Guardarraíl defensivo sobre las métricas globales del dataset.
+def validate_metrics(metrics: dict, logger) -> None:
+    """Defensive guardrail over the global dataset metrics.
 
-    Aborta si el conteo de filas es sospechosamente bajo (regla de CLAUDE.md:
-    "Si el dataset cargado tiene menos filas de las esperadas, parar...").
+    Aborts if the row count is suspiciously low (rule: "if the loaded
+    dataset has fewer rows than expected, stop...").
     """
-    n_filas = metricas["n_filas"]
-    if n_filas < FILAS_ESPERADAS_MENSAJES:
+    n_rows = metrics["n_rows"]
+    if n_rows < EXPECTED_MESSAGES_ROWS:
         logger.error(
-            "Filas inesperadamente bajas: %d (esperadas >=%d). "
-            "La descarga puede estar truncada.",
-            n_filas,
-            FILAS_ESPERADAS_MENSAJES,
+            "Unexpectedly low row count: %d (expected >=%d). "
+            "The download may be truncated.",
+            n_rows,
+            EXPECTED_MESSAGES_ROWS,
         )
         raise RuntimeError(
-            f"messages.csv.gz tiene {n_filas} filas, muy por debajo del "
-            f"umbral {FILAS_ESPERADAS_MENSAJES}."
+            f"messages.csv.gz has {n_rows} rows, far below the "
+            f"{EXPECTED_MESSAGES_ROWS} threshold."
         )
 
 
 # ----------------------------------------------------------------------------
-# Orquestador de Fase 1
+# Phase 1 orchestrator
 # ----------------------------------------------------------------------------
 
 
-def ejecutar_fase_1() -> None:
-    """Punto de entrada de la Fase 1. Validar, calcular ventanas y persistir."""
-    logger = configurar_logger("fase_1_data")
+def run_phase_1() -> None:
+    """Phase 1 entry point. Validate, compute windows and persist."""
+    logger = setup_logger("phase_1_data")
     t0 = time.time()
-    logger.info("=== INICIO FASE 1 - carga y validacion ===")
+    logger.info("=== PHASE 1 START - loading and validation ===")
 
-    # 1) Verificación MD5 (no fatal si difiere; solo warning).
-    md5_actual = verificar_md5_mensajes(logger)
+    # 1) MD5 verification (not fatal if it differs; warning only).
+    current_md5 = verify_messages_md5(logger)
 
-    # 2) Pasada por chunks sobre messages.csv.gz: solo 3 columnas para validar
-    #    integridad y calcular el rango temporal. Acumulamos métricas sin
-    #    materializar el DataFrame completo (RAM lo prohíbe a esta escala).
+    # 2) Chunked pass over messages.csv.gz: only 3 columns to validate
+    #    integrity and compute the time range. Metrics are accumulated
+    #    without materializing the full DataFrame (RAM forbids it at this
+    #    scale).
     logger.info(
-        "Iterando messages.csv.gz por chunks (columnas: %s)...",
-        COLUMNAS_VALIDACION_MINIMA,
+        "Iterating messages.csv.gz in chunks (columns: %s)...",
+        MINIMAL_VALIDATION_COLUMNS,
     )
     t_msg = time.time()
-    metricas = recolectar_metricas_globales(logger)
+    metrics = collect_global_metrics(logger)
     logger.info(
-        "Iteración completa en %.1fs (%d filas)",
+        "Full iteration in %.1fs (%d rows)",
         time.time() - t_msg,
-        metricas["n_filas"],
+        metrics["n_rows"],
     )
 
-    validar_metricas(metricas, logger)
+    validate_metrics(metrics, logger)
 
-    # 3) Ventanas temporales (D1) + persistencia en config.json.
-    ventanas = determinar_ventanas_temporales(
-        metricas["min_sent_at"], metricas["max_sent_at"], logger
+    # 3) Time windows (D1) + persistence in config.json.
+    windows = compute_time_windows(
+        metrics["min_sent_at"], metrics["max_sent_at"], logger
     )
-    persistir_ventanas_en_config(ventanas, md5_actual, logger)
+    persist_windows_in_config(windows, current_md5, logger)
 
-    # 4) Carga + validación rápida de los 3 auxiliares.
-    df_campaigns = cargar_campaigns()
-    df_primera_compra = cargar_primera_compra()
-    df_holidays = cargar_holidays()
+    # 4) Load + quick validation of the 3 auxiliary files.
+    df_campaigns = load_campaigns()
+    df_first_purchase = load_first_purchase()
+    df_holidays = load_holidays()
     logger.info(
-        "Auxiliares cargados: campaigns=%d, primera_compra=%d, holidays=%d",
+        "Auxiliary files loaded: campaigns=%d, first_purchase=%d, holidays=%d",
         len(df_campaigns),
-        len(df_primera_compra),
+        len(df_first_purchase),
         len(df_holidays),
     )
 
-    # 5) Checkpoint final.
+    # 5) Final checkpoint.
     elapsed = time.time() - t0
-    imprimir_checkpoint(
+    print_checkpoint(
         logger,
-        "Fase 1 - Carga y validacion",
+        "Phase 1 - Loading and validation",
         {
-            "Filas en messages.csv.gz": f"{metricas['n_filas']:,}",
-            "Usuarios únicos (client_id)": f"{metricas['n_usuarios']:,}",
-            "Distribución por canal": metricas["canales"],
-            "Filas en campaigns": len(df_campaigns),
-            "Filas en client_first_purchase_date": f"{len(df_primera_compra):,}",
-            "Filas en holidays": len(df_holidays),
-            "Rango temporal del dataset": f"{ventanas['min_sent_at']} -> {ventanas['max_sent_at']}",
-            "Corte de observación": ventanas["corte_observacion"],
-            "Corte de evaluación": ventanas["corte_evaluacion"],
-            "MD5 messages.csv.gz": md5_actual,
-            "Tiempo total (s)": round(elapsed, 1),
-            "Siguiente fase": "Fase 2 - src/features.py",
+            "Rows in messages.csv.gz": f"{metrics['n_rows']:,}",
+            "Unique users (client_id)": f"{metrics['n_users']:,}",
+            "Channel distribution": metrics["channels"],
+            "Rows in campaigns": len(df_campaigns),
+            "Rows in client_first_purchase_date": f"{len(df_first_purchase):,}",
+            "Rows in holidays": len(df_holidays),
+            "Dataset time range": f"{windows['min_sent_at']} -> {windows['max_sent_at']}",
+            "Observation cutoff": windows["observation_cutoff"],
+            "Evaluation cutoff": windows["evaluation_cutoff"],
+            "MD5 messages.csv.gz": current_md5,
+            "Total time (s)": round(elapsed, 1),
+            "Next phase": "Phase 2 - src/features.py",
         },
     )
 
 
 if __name__ == "__main__":
-    ejecutar_fase_1()
+    run_phase_1()

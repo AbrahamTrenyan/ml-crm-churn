@@ -1,24 +1,24 @@
-"""Fase 4 del pipeline: métricas, figuras y reporte académico.
+"""Pipeline Phase 4: metrics, figures and results report.
 
-Carga los modelos persistidos por Fase 3 (los más recientes por timestamp),
-los aplica al holdout, calcula métricas con CI 95% por bootstrap, genera
-figuras PNG y emite `outputs/report.md` con tablas Markdown nativas.
+Loads the models persisted by Phase 3 (the most recent by timestamp),
+applies them to the holdout, computes metrics with 95% bootstrap CIs,
+generates PNG figures and writes `outputs/report.md` with native Markdown
+tables.
 
-Decisiones técnicas clave:
+Key technical decisions:
 
-- **Threshold por modelo**: se reporta tanto el threshold por defecto (0.5)
-  como el "óptimo F1" (paper sec. IV.D habla de matriz de confusión y
-  priorización de recall; reportamos ambos para transparencia).
-- **Bootstrap**: `config.bootstrap_iters` (1000 por defecto) resampleos
-  con reemplazo sobre (y_test, y_pred_proba). CI 95% por percentiles
-  (2.5%, 97.5%).
-- **Feature importance**: solo RF y XGB (paper sec. IV.D línea 304). LR
-  no se grafica (solo se reporta su AUC en la tabla comparativa).
-- **Tablas en `report.md`**: Markdown nativo, nunca PNG.
-- **Figuras**: ROC overlay, PR overlay, confusión por modelo,
-  feature importance para RF y XGB.
+- **Threshold per model**: both the default threshold (0.5) and the
+  "optimal F1" one are reported (paper sec. IV.D discusses the confusion
+  matrix and recall prioritization; both are reported for transparency).
+- **Bootstrap**: `config.bootstrap_iters` resamples with replacement over
+  (y_test, y_pred_proba). 95% CI by percentiles (2.5%, 97.5%).
+- **Feature importance**: RF and XGB only (paper sec. IV.D). LR is not
+  plotted (only its AUC is reported in the comparison table).
+- **Tables in `report.md`**: native Markdown, never PNG.
+- **Figures**: ROC overlay, PR overlay, per-model confusion matrix,
+  feature importance for RF and XGB.
 
-Ejecutar standalone:
+Run standalone:
     python -m src.evaluate
 """
 from __future__ import annotations
@@ -30,12 +30,11 @@ from typing import Any
 
 import matplotlib
 
-matplotlib.use("Agg")  # Backend sin display: necesario en pipeline batch.
+matplotlib.use("Agg")  # Headless backend: required in a batch pipeline.
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
-    auc,
     average_precision_score,
     confusion_matrix,
     f1_score,
@@ -47,19 +46,19 @@ from sklearn.metrics import (
 )
 
 from src.logging_utils import (
-    DIR_FIGURES,
-    DIR_MODELS,
-    RAIZ_PROYECTO,
-    TIMESTAMP_CORRIDA,
-    cargar_config,
-    configurar_logger,
-    imprimir_checkpoint,
+    FIGURES_DIR,
+    MODELS_DIR,
+    PROJECT_ROOT,
+    RUN_TIMESTAMP,
+    load_config,
+    print_checkpoint,
+    setup_logger,
 )
 
 
-PATH_REPORT = RAIZ_PROYECTO / "outputs" / "report.md"
+REPORT_PATH = PROJECT_ROOT / "outputs" / "report.md"
 
-NOMBRES_MODELOS_LEGIBLES = {
+READABLE_MODEL_NAMES = {
     "logreg": "Logistic Regression",
     "rf": "Random Forest",
     "xgb": "XGBoost",
@@ -67,51 +66,51 @@ NOMBRES_MODELOS_LEGIBLES = {
 
 
 # ----------------------------------------------------------------------------
-# Carga de modelos y split
+# Model and split loading
 # ----------------------------------------------------------------------------
 
 
-def _ultimo_archivo(prefijo: str) -> Path:
-    """Devuelve el .pkl más reciente con el prefijo dado en DIR_MODELS."""
-    candidatos = sorted(DIR_MODELS.glob(f"{prefijo}_*.pkl"))
-    if not candidatos:
+def _latest_file(prefix: str) -> Path:
+    """Returns the most recent .pkl with the given prefix in MODELS_DIR."""
+    candidates = sorted(MODELS_DIR.glob(f"{prefix}_*.pkl"))
+    if not candidates:
         raise FileNotFoundError(
-            f"No hay archivos `{prefijo}_*.pkl` en {DIR_MODELS}. "
-            "Correr antes Fase 3 (python -m src.train)."
+            f"No `{prefix}_*.pkl` files in {MODELS_DIR}. "
+            "Run Phase 3 first (python -m src.train)."
         )
-    return candidatos[-1]
+    return candidates[-1]
 
 
-def cargar_split(logger) -> dict:
-    """Carga el split de train/test más reciente."""
-    path = _ultimo_archivo("split")
+def load_split(logger) -> dict:
+    """Loads the most recent train/test split."""
+    path = _latest_file("split")
     with open(path, "rb") as f:
         split = pickle.load(f)
-    logger.info("Split cargado: %s", path)
+    logger.info("Split loaded: %s", path)
     return split
 
 
-def cargar_modelos(logger) -> dict[str, dict]:
-    """Carga los 3 modelos (logreg, rf, xgb), tomando siempre el más reciente."""
+def load_models(logger) -> dict[str, dict]:
+    """Loads the 3 models (logreg, rf, xgb), always taking the most recent."""
     out: dict[str, dict] = {}
-    for nombre in ("logreg", "rf", "xgb"):
-        path = _ultimo_archivo(f"modelo_{nombre}")
+    for name in ("logreg", "rf", "xgb"):
+        path = _latest_file(f"model_{name}")
         with open(path, "rb") as f:
-            out[nombre] = pickle.load(f)
-        logger.info("Modelo %s cargado: %s", nombre, path)
+            out[name] = pickle.load(f)
+        logger.info("Model %s loaded: %s", name, path)
     return out
 
 
 # ----------------------------------------------------------------------------
-# Métricas y bootstrap
+# Metrics and bootstrap
 # ----------------------------------------------------------------------------
 
 
-def _threshold_optimo_f1(y_true: np.ndarray, y_proba: np.ndarray) -> float:
-    """Threshold sobre la curva PR que maximiza F1.
+def _optimal_f1_threshold(y_true: np.ndarray, y_proba: np.ndarray) -> float:
+    """Threshold on the PR curve that maximizes F1.
 
-    `precision_recall_curve` devuelve thresholds de tamaño n-1; F1 puede
-    indefinirse en extremos: lo manejamos con `np.divide(out=zeros)`.
+    `precision_recall_curve` returns thresholds of size n-1; F1 may be
+    undefined at the extremes: handled with `np.divide(out=zeros)`.
     """
     precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
     denom = precision + recall
@@ -122,10 +121,10 @@ def _threshold_optimo_f1(y_true: np.ndarray, y_proba: np.ndarray) -> float:
     return float(thresholds[idx])
 
 
-def metricas_punto(
+def point_metrics(
     y_true: np.ndarray, y_proba: np.ndarray, threshold: float
 ) -> dict[str, float]:
-    """Métricas escalares para un threshold dado + AUC/PR-AUC."""
+    """Scalar metrics for a given threshold + AUC/PR-AUC."""
     y_pred = (y_proba >= threshold).astype("int8")
     return {
         "auc_roc": float(roc_auc_score(y_true, y_proba)),
@@ -144,111 +143,111 @@ def bootstrap_ci(
     n_iters: int,
     seed: int,
 ) -> dict[str, tuple[float, float]]:
-    """Bootstrap percentil 95% CI para las 5 métricas escalares.
+    """95% percentile bootstrap CI for the 5 scalar metrics.
 
-    Resamplea (y_true, y_proba) con reemplazo `n_iters` veces y recalcula
-    cada métrica. Devuelve dict metrica -> (low_2.5%, high_97.5%).
+    Resamples (y_true, y_proba) with replacement `n_iters` times and
+    recomputes each metric. Returns dict metric -> (low_2.5%, high_97.5%).
     """
     rng = np.random.default_rng(seed)
     n = len(y_true)
-    acum: dict[str, list[float]] = {
+    acc: dict[str, list[float]] = {
         k: [] for k in ("auc_roc", "pr_auc", "f1", "precision", "recall")
     }
     for _ in range(n_iters):
         idx = rng.integers(0, n, size=n)
         yt, yp = y_true[idx], y_proba[idx]
-        # AUC requiere ambas clases presentes en el resample.
+        # AUC requires both classes present in the resample.
         if len(np.unique(yt)) < 2:
             continue
         yp_bin = (yp >= threshold).astype("int8")
-        acum["auc_roc"].append(roc_auc_score(yt, yp))
-        acum["pr_auc"].append(average_precision_score(yt, yp))
-        acum["f1"].append(f1_score(yt, yp_bin, zero_division=0))
-        acum["precision"].append(precision_score(yt, yp_bin, zero_division=0))
-        acum["recall"].append(recall_score(yt, yp_bin, zero_division=0))
+        acc["auc_roc"].append(roc_auc_score(yt, yp))
+        acc["pr_auc"].append(average_precision_score(yt, yp))
+        acc["f1"].append(f1_score(yt, yp_bin, zero_division=0))
+        acc["precision"].append(precision_score(yt, yp_bin, zero_division=0))
+        acc["recall"].append(recall_score(yt, yp_bin, zero_division=0))
 
     return {
         k: (
             float(np.percentile(v, 2.5)) if v else float("nan"),
             float(np.percentile(v, 97.5)) if v else float("nan"),
         )
-        for k, v in acum.items()
+        for k, v in acc.items()
     }
 
 
 # ----------------------------------------------------------------------------
-# Figuras
+# Figures
 # ----------------------------------------------------------------------------
 
 
-def figura_roc_overlay(
-    resultados: dict[str, dict], y_true: np.ndarray, logger
+def roc_overlay_figure(
+    results: dict[str, dict], y_true: np.ndarray, logger
 ) -> Path:
-    """Plot de curvas ROC superpuestas para los 3 modelos."""
+    """Overlaid ROC curves for the 3 models."""
     fig, ax = plt.subplots(figsize=(7, 6))
-    for nombre, r in resultados.items():
+    for name, r in results.items():
         fpr, tpr, _ = roc_curve(y_true, r["y_proba"])
         ax.plot(
             fpr,
             tpr,
-            label=f"{NOMBRES_MODELOS_LEGIBLES[nombre]} (AUC={r['default']['auc_roc']:.3f})",
+            label=f"{READABLE_MODEL_NAMES[name]} (AUC={r['default']['auc_roc']:.3f})",
             linewidth=2,
         )
     ax.plot([0, 1], [0, 1], "--", color="grey", linewidth=1)
-    ax.set_xlabel("Tasa de falsos positivos (FPR)")
-    ax.set_ylabel("Tasa de verdaderos positivos (TPR)")
-    ax.set_title("Curvas ROC comparativas")
+    ax.set_xlabel("False positive rate (FPR)")
+    ax.set_ylabel("True positive rate (TPR)")
+    ax.set_title("ROC curves comparison")
     ax.legend(loc="lower right")
     ax.grid(alpha=0.3)
-    path = DIR_FIGURES / f"roc_curves_{TIMESTAMP_CORRIDA}.png"
+    path = FIGURES_DIR / f"roc_curves_{RUN_TIMESTAMP}.png"
     fig.tight_layout()
     fig.savefig(path, dpi=140)
     plt.close(fig)
-    logger.info("Figura ROC: %s", path)
+    logger.info("ROC figure: %s", path)
     return path
 
 
-def figura_pr_overlay(
-    resultados: dict[str, dict], y_true: np.ndarray, logger
+def pr_overlay_figure(
+    results: dict[str, dict], y_true: np.ndarray, logger
 ) -> Path:
-    """Plot de curvas Precision-Recall superpuestas."""
+    """Overlaid Precision-Recall curves."""
     fig, ax = plt.subplots(figsize=(7, 6))
-    for nombre, r in resultados.items():
+    for name, r in results.items():
         precision, recall, _ = precision_recall_curve(y_true, r["y_proba"])
         ap = r["default"]["pr_auc"]
         ax.plot(
             recall,
             precision,
-            label=f"{NOMBRES_MODELOS_LEGIBLES[nombre]} (AP={ap:.3f})",
+            label=f"{READABLE_MODEL_NAMES[name]} (AP={ap:.3f})",
             linewidth=2,
         )
     ax.set_xlabel("Recall")
     ax.set_ylabel("Precision")
-    ax.set_title("Curvas Precision-Recall comparativas")
+    ax.set_title("Precision-Recall curves comparison")
     ax.legend(loc="lower left")
     ax.grid(alpha=0.3)
-    path = DIR_FIGURES / f"pr_curves_{TIMESTAMP_CORRIDA}.png"
+    path = FIGURES_DIR / f"pr_curves_{RUN_TIMESTAMP}.png"
     fig.tight_layout()
     fig.savefig(path, dpi=140)
     plt.close(fig)
-    logger.info("Figura PR: %s", path)
+    logger.info("PR figure: %s", path)
     return path
 
 
-def figura_confusion(
-    nombre: str, y_true: np.ndarray, y_proba: np.ndarray, threshold: float, logger
+def confusion_figure(
+    name: str, y_true: np.ndarray, y_proba: np.ndarray, threshold: float, logger
 ) -> Path:
-    """Matriz de confusión para un modelo y threshold dado."""
+    """Confusion matrix for a model at a given threshold."""
     y_pred = (y_proba >= threshold).astype("int8")
     cm = confusion_matrix(y_true, y_pred)
     fig, ax = plt.subplots(figsize=(5, 4.2))
     im = ax.imshow(cm, cmap="Blues")
     ax.set_xticks([0, 1], labels=["No churn", "Churn"])
     ax.set_yticks([0, 1], labels=["No churn", "Churn"])
-    ax.set_xlabel("Predicción")
-    ax.set_ylabel("Real")
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
     ax.set_title(
-        f"Matriz de confusión - {NOMBRES_MODELOS_LEGIBLES[nombre]} (thr={threshold:.2f})"
+        f"Confusion matrix - {READABLE_MODEL_NAMES[name]} (thr={threshold:.2f})"
     )
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
@@ -259,59 +258,59 @@ def figura_confusion(
                 fontsize=11,
             )
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    path = DIR_FIGURES / f"confusion_{nombre}_{TIMESTAMP_CORRIDA}.png"
+    path = FIGURES_DIR / f"confusion_{name}_{RUN_TIMESTAMP}.png"
     fig.tight_layout()
     fig.savefig(path, dpi=140)
     plt.close(fig)
-    logger.info("Figura confusión %s: %s", nombre, path)
+    logger.info("Confusion figure %s: %s", name, path)
     return path
 
 
-def figura_feature_importance(
-    nombre: str, artefacto: dict, top_k: int, logger
+def feature_importance_figure(
+    name: str, artifact: dict, top_k: int, logger
 ) -> Path | None:
-    """Bar plot de feature importance para modelos basados en árboles."""
-    estimador = artefacto["estimador"].named_steps["clf"]
-    if not hasattr(estimador, "feature_importances_"):
+    """Feature importance bar plot for tree-based models."""
+    estimator = artifact["estimator"].named_steps["clf"]
+    if not hasattr(estimator, "feature_importances_"):
         return None
     imps = pd.Series(
-        estimador.feature_importances_,
-        index=artefacto["feature_names"],
+        estimator.feature_importances_,
+        index=artifact["feature_names"],
     ).sort_values(ascending=False).head(top_k)
 
     fig, ax = plt.subplots(figsize=(8, max(4, 0.3 * len(imps))))
     imps[::-1].plot(kind="barh", ax=ax, color="steelblue")
-    ax.set_xlabel("Importancia")
-    ax.set_title(f"Top {top_k} features - {NOMBRES_MODELOS_LEGIBLES[nombre]}")
-    path = DIR_FIGURES / f"feature_importance_{nombre}_{TIMESTAMP_CORRIDA}.png"
+    ax.set_xlabel("Importance")
+    ax.set_title(f"Top {top_k} features - {READABLE_MODEL_NAMES[name]}")
+    path = FIGURES_DIR / f"feature_importance_{name}_{RUN_TIMESTAMP}.png"
     fig.tight_layout()
     fig.savefig(path, dpi=140)
     plt.close(fig)
-    logger.info("Figura feature_importance %s: %s", nombre, path)
+    logger.info("Feature importance figure %s: %s", name, path)
     return path
 
 
 # ----------------------------------------------------------------------------
-# Reporte Markdown
+# Markdown report
 # ----------------------------------------------------------------------------
 
 
-def _fmt_metric(valor: float, ci: tuple[float, float]) -> str:
-    return f"{valor:.3f} [{ci[0]:.3f}, {ci[1]:.3f}]"
+def _fmt_metric(value: float, ci: tuple[float, float]) -> str:
+    return f"{value:.3f} [{ci[0]:.3f}, {ci[1]:.3f}]"
 
 
-def _tabla_resumen_markdown(resultados: dict[str, dict]) -> str:
-    """Tabla comparativa con métricas + CI 95% sobre el threshold óptimo F1."""
-    cabecera = (
-        "| Modelo | AUC-ROC | PR-AUC | F1 | Precision | Recall | Threshold |\n"
+def _summary_table_markdown(results: dict[str, dict]) -> str:
+    """Comparison table with metrics + 95% CI at the optimal F1 threshold."""
+    header = (
+        "| Model | AUC-ROC | PR-AUC | F1 | Precision | Recall | Threshold |\n"
         "|---|---|---|---|---|---|---|\n"
     )
-    filas = []
-    for nombre, r in resultados.items():
-        m = r["optimo_f1"]
-        ci = r["ci_optimo_f1"]
-        filas.append(
-            f"| {NOMBRES_MODELOS_LEGIBLES[nombre]} "
+    rows = []
+    for name, r in results.items():
+        m = r["optimal_f1"]
+        ci = r["ci_optimal_f1"]
+        rows.append(
+            f"| {READABLE_MODEL_NAMES[name]} "
             f"| {_fmt_metric(m['auc_roc'], ci['auc_roc'])} "
             f"| {_fmt_metric(m['pr_auc'], ci['pr_auc'])} "
             f"| {_fmt_metric(m['f1'], ci['f1'])} "
@@ -319,209 +318,209 @@ def _tabla_resumen_markdown(resultados: dict[str, dict]) -> str:
             f"| {_fmt_metric(m['recall'], ci['recall'])} "
             f"| {m['threshold']:.3f} |"
         )
-    return cabecera + "\n".join(filas)
+    return header + "\n".join(rows)
 
 
-def _identificar_ganador(resultados: dict[str, dict]) -> str:
-    """Modelo con mejor AUC-ROC (paper prioriza recall + AUC-ROC)."""
+def _identify_winner(results: dict[str, dict]) -> str:
+    """Model with the best AUC-ROC (the paper prioritizes recall + AUC-ROC)."""
     return max(
-        resultados.items(), key=lambda kv: kv[1]["optimo_f1"]["auc_roc"]
+        results.items(), key=lambda kv: kv[1]["optimal_f1"]["auc_roc"]
     )[0]
 
 
-def escribir_reporte(
-    resultados: dict[str, dict],
+def write_report(
+    results: dict[str, dict],
     split: dict,
-    figuras: dict[str, list[Path]],
+    figures: dict[str, list[Path]],
     logger,
 ) -> Path:
-    """Escribe `outputs/report.md` con metodología, tabla y figuras embebidas."""
-    config = cargar_config()
-    vf = config["ventana_fechas"]
-    ganador = _identificar_ganador(resultados)
+    """Writes `outputs/report.md` with methodology, table and embedded figures."""
+    config = load_config()
+    wd = config["window_dates"]
+    winner = _identify_winner(results)
 
-    lineas: list[str] = []
-    lineas.append("# Reporte de resultados - churn de comunicación CRM multicanal")
-    lineas.append("")
-    lineas.append(f"_Generado: {TIMESTAMP_CORRIDA}_")
-    lineas.append("")
+    lines: list[str] = []
+    lines.append("# Results report - multichannel CRM communication churn")
+    lines.append("")
+    lines.append(f"_Generated: {RUN_TIMESTAMP}_")
+    lines.append("")
 
-    lineas.append("## Metodología (síntesis para el paper)")
-    lineas.append("")
-    lineas.append(
-        "- **D1 Ventana temporal**: observación = "
-        f"{vf['corte_observacion']} → {vf['corte_evaluacion']} "
-        f"({config['ventana_observacion_meses']} meses). "
-        "Evaluación = "
-        f"{vf['corte_evaluacion']} → {vf['max_sent_at']} "
-        f"({config['ventana_evaluacion_meses']} meses). Conteo hacia atrás "
-        "desde `max(sent_at)`."
+    lines.append("## Methodology (summary for the paper)")
+    lines.append("")
+    lines.append(
+        "- **D1 Time window**: observation = "
+        f"{wd['observation_cutoff']} → {wd['evaluation_cutoff']} "
+        f"({config['observation_window_months']} months). "
+        "Evaluation = "
+        f"{wd['evaluation_cutoff']} → {wd['max_sent_at']} "
+        f"({config['evaluation_window_months']} months). Counted backwards "
+        "from `max(sent_at)`."
     )
-    lineas.append(
-        "- **D2 Atribución de compra**: se usa `is_purchased` del dataset "
-        "tal como viene (atribución CRM origen)."
+    lines.append(
+        "- **D2 Purchase attribution**: `is_purchased` is used as it comes "
+        "in the dataset (source CRM attribution)."
     )
-    lineas.append(
-        "- **D3 Features**: lista cerrada del paper sec. IV.C. Sin features "
-        "adicionales no documentadas."
+    lines.append(
+        "- **D3 Features**: closed list from paper sec. IV.C. No additional "
+        "undocumented features."
     )
-    lineas.append(
-        "- **D4 Entorno**: Python 3.11.4, stack pandas/sklearn/xgboost/imblearn. "
-        f"SEED = {config['seed']} global."
+    lines.append(
+        "- **D4 Environment**: Python 3.11.4, pandas/sklearn/xgboost/imblearn "
+        f"stack. Global SEED = {config['seed']}."
     )
-    lineas.append(
-        "- **D5 Dataset**: `messages.csv.gz` (24 meses, 721M filas en bruto), "
-        "descargado de `data.rees46.com`. Se procesa por streaming gzip + "
-        "chunks (sin descomprimir a disco)."
+    lines.append(
+        "- **D5 Dataset**: `messages.csv.gz` (24 months, 721M raw rows), "
+        "downloaded from `data.rees46.com`. Processed via gzip streaming + "
+        "chunks (never decompressed to disk)."
     )
-    lineas.append("")
+    lines.append("")
 
-    lineas.append("## Split y desbalance")
-    lineas.append("")
-    lineas.append(
-        f"- Tamaño train: {len(split['y_train']):,} | "
-        f"Tamaño test: {len(split['y_test']):,}"
+    lines.append("## Split and imbalance")
+    lines.append("")
+    lines.append(
+        f"- Train size: {len(split['y_train']):,} | "
+        f"Test size: {len(split['y_test']):,}"
     )
-    lineas.append(
-        f"- Prevalencia churn en train: {float(split['y_train'].mean()):.4f}"
+    lines.append(
+        f"- Churn prevalence in train: {float(split['y_train'].mean()):.4f}"
     )
-    lineas.append(
-        f"- Prevalencia churn en test:  {float(split['y_test'].mean()):.4f}"
+    lines.append(
+        f"- Churn prevalence in test:  {float(split['y_test'].mean()):.4f}"
     )
-    lineas.append(
-        f"- SMOTE aplicado: **{split['aplicar_smote']}** (threshold = "
+    lines.append(
+        f"- SMOTE applied: **{split['smote_applied']}** (threshold = "
         f"{config['smote_threshold']})"
     )
-    lineas.append("")
+    lines.append("")
 
-    lineas.append("## Resultados comparativos (threshold óptimo F1)")
-    lineas.append("")
-    lineas.append(
-        "Métricas con intervalo de confianza 95% por bootstrap "
-        f"({config['bootstrap_iters']} iteraciones)."
+    lines.append("## Comparative results (optimal F1 threshold)")
+    lines.append("")
+    lines.append(
+        "Metrics with 95% bootstrap confidence intervals "
+        f"({config['bootstrap_iters']} iterations)."
     )
-    lineas.append("")
-    lineas.append(_tabla_resumen_markdown(resultados))
-    lineas.append("")
-    lineas.append(
-        f"**Modelo ganador (mejor AUC-ROC):** "
-        f"{NOMBRES_MODELOS_LEGIBLES[ganador]}."
+    lines.append("")
+    lines.append(_summary_table_markdown(results))
+    lines.append("")
+    lines.append(
+        f"**Winning model (best AUC-ROC):** "
+        f"{READABLE_MODEL_NAMES[winner]}."
     )
-    lineas.append("")
+    lines.append("")
 
-    lineas.append("## Resultados con threshold por defecto (0.5)")
-    lineas.append("")
-    cabecera_def = (
-        "| Modelo | AUC-ROC | PR-AUC | F1 | Precision | Recall |\n"
+    lines.append("## Results at the default threshold (0.5)")
+    lines.append("")
+    default_header = (
+        "| Model | AUC-ROC | PR-AUC | F1 | Precision | Recall |\n"
         "|---|---|---|---|---|---|\n"
     )
-    filas_def = []
-    for nombre, r in resultados.items():
+    default_rows = []
+    for name, r in results.items():
         m = r["default"]
-        filas_def.append(
-            f"| {NOMBRES_MODELOS_LEGIBLES[nombre]} "
+        default_rows.append(
+            f"| {READABLE_MODEL_NAMES[name]} "
             f"| {m['auc_roc']:.3f} | {m['pr_auc']:.3f} "
             f"| {m['f1']:.3f} | {m['precision']:.3f} | {m['recall']:.3f} |"
         )
-    lineas.append(cabecera_def + "\n".join(filas_def))
-    lineas.append("")
+    lines.append(default_header + "\n".join(default_rows))
+    lines.append("")
 
-    lineas.append("## Figuras")
-    lineas.append("")
-    for nombre, paths in figuras.items():
+    lines.append("## Figures")
+    lines.append("")
+    for name, paths in figures.items():
         for p in paths:
-            rel = p.relative_to(RAIZ_PROYECTO)
-            lineas.append(f"![{nombre}]({rel})")
-            lineas.append("")
+            rel = p.relative_to(PROJECT_ROOT)
+            lines.append(f"![{name}]({rel})")
+            lines.append("")
 
-    contenido = "\n".join(lineas) + "\n"
-    PATH_REPORT.parent.mkdir(parents=True, exist_ok=True)
-    PATH_REPORT.write_text(contenido, encoding="utf-8")
-    logger.info("Reporte escrito: %s", PATH_REPORT)
-    return PATH_REPORT
+    content = "\n".join(lines) + "\n"
+    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    REPORT_PATH.write_text(content, encoding="utf-8")
+    logger.info("Report written: %s", REPORT_PATH)
+    return REPORT_PATH
 
 
 # ----------------------------------------------------------------------------
-# Orquestador de Fase 4
+# Phase 4 orchestrator
 # ----------------------------------------------------------------------------
 
 
-def ejecutar_fase_4(force: bool = False) -> None:
-    """Evalúa los 3 modelos, genera figuras y escribe report.md."""
+def run_phase_4(force: bool = False) -> None:
+    """Evaluates the 3 models, generates figures and writes report.md."""
     del force
-    logger = configurar_logger("fase_4_evaluate")
+    logger = setup_logger("phase_4_evaluate")
     t0 = time.time()
-    logger.info("=== INICIO FASE 4 - evaluacion ===")
+    logger.info("=== PHASE 4 START - evaluation ===")
 
-    config = cargar_config()
+    config = load_config()
     seed = config["seed"]
     n_boot = config["bootstrap_iters"]
 
-    split = cargar_split(logger)
-    modelos = cargar_modelos(logger)
+    split = load_split(logger)
+    models = load_models(logger)
     X_test, y_test = split["X_test"], split["y_test"].to_numpy()
 
-    resultados: dict[str, dict] = {}
-    figuras: dict[str, list[Path]] = {}
+    results: dict[str, dict] = {}
+    figures: dict[str, list[Path]] = {}
 
-    for nombre, artefacto in modelos.items():
-        estimador = artefacto["estimador"]
-        y_proba = estimador.predict_proba(X_test)[:, 1]
+    for name, artifact in models.items():
+        estimator = artifact["estimator"]
+        y_proba = estimator.predict_proba(X_test)[:, 1]
 
-        thr_opt = _threshold_optimo_f1(y_test, y_proba)
-        m_default = metricas_punto(y_test, y_proba, threshold=0.5)
-        m_optimo = metricas_punto(y_test, y_proba, threshold=thr_opt)
+        thr_opt = _optimal_f1_threshold(y_test, y_proba)
+        m_default = point_metrics(y_test, y_proba, threshold=0.5)
+        m_optimal = point_metrics(y_test, y_proba, threshold=thr_opt)
         ci_default = bootstrap_ci(y_test, y_proba, 0.5, n_boot, seed)
-        ci_optimo = bootstrap_ci(y_test, y_proba, thr_opt, n_boot, seed)
+        ci_optimal = bootstrap_ci(y_test, y_proba, thr_opt, n_boot, seed)
 
-        resultados[nombre] = {
+        results[name] = {
             "y_proba": y_proba,
             "default": m_default,
-            "optimo_f1": m_optimo,
+            "optimal_f1": m_optimal,
             "ci_default": ci_default,
-            "ci_optimo_f1": ci_optimo,
+            "ci_optimal_f1": ci_optimal,
         }
         logger.info(
             "%s: AUC=%.4f, PR-AUC=%.4f, F1@thr*=%.4f (thr*=%.3f)",
-            nombre,
-            m_optimo["auc_roc"],
-            m_optimo["pr_auc"],
-            m_optimo["f1"],
+            name,
+            m_optimal["auc_roc"],
+            m_optimal["pr_auc"],
+            m_optimal["f1"],
             thr_opt,
         )
 
-        # Figura de confusión por modelo (al threshold óptimo).
-        fp_cm = figura_confusion(nombre, y_test, y_proba, thr_opt, logger)
-        figuras.setdefault(nombre, []).append(fp_cm)
+        # Per-model confusion figure (at the optimal threshold).
+        fp_cm = confusion_figure(name, y_test, y_proba, thr_opt, logger)
+        figures.setdefault(name, []).append(fp_cm)
 
-        # Feature importance solo para modelos basados en árboles.
-        fp_fi = figura_feature_importance(nombre, artefacto, top_k=20, logger=logger)
+        # Feature importance only for tree-based models.
+        fp_fi = feature_importance_figure(name, artifact, top_k=20, logger=logger)
         if fp_fi is not None:
-            figuras.setdefault(nombre, []).append(fp_fi)
+            figures.setdefault(name, []).append(fp_fi)
 
-    # Figuras comparativas globales.
-    fp_roc = figura_roc_overlay(resultados, y_test, logger)
-    fp_pr = figura_pr_overlay(resultados, y_test, logger)
-    figuras["comparativas"] = [fp_roc, fp_pr]
+    # Global comparison figures.
+    fp_roc = roc_overlay_figure(results, y_test, logger)
+    fp_pr = pr_overlay_figure(results, y_test, logger)
+    figures["comparison"] = [fp_roc, fp_pr]
 
-    # Reporte final.
-    path_report = escribir_reporte(resultados, split, figuras, logger)
+    # Final report.
+    report_path = write_report(results, split, figures, logger)
 
     elapsed = time.time() - t0
-    imprimir_checkpoint(
+    print_checkpoint(
         logger,
-        "Fase 4 - Evaluación",
+        "Phase 4 - Evaluation",
         {
-            "Modelos evaluados": list(resultados.keys()),
-            "Ganador (AUC-ROC)": _identificar_ganador(resultados),
+            "Models evaluated": list(results.keys()),
+            "Winner (AUC-ROC)": _identify_winner(results),
             "Bootstrap iters": n_boot,
-            "Figuras generadas": sum(len(v) for v in figuras.values()),
-            "Reporte": path_report,
-            "Tiempo total (s)": round(elapsed, 1),
-            "Siguiente fase": "(fin del pipeline)",
+            "Figures generated": sum(len(v) for v in figures.values()),
+            "Report": report_path,
+            "Total time (s)": round(elapsed, 1),
+            "Next phase": "(end of pipeline)",
         },
     )
 
 
 if __name__ == "__main__":
-    ejecutar_fase_4()
+    run_phase_4()

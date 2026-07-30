@@ -1,7 +1,7 @@
-"""Logging y utilidades comunes del pipeline.
+"""Logging and shared pipeline utilities.
 
-Centraliza la configuración de logging para que todos los módulos escriban
-en el mismo archivo `outputs/logs/run_<timestamp>.log` y en stdout.
+Centralizes logging configuration so that every module writes to the same
+`outputs/logs/run_<timestamp>.log` file and to stdout.
 """
 from __future__ import annotations
 
@@ -11,85 +11,85 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# DECISIÓN: timestamp único por corrida para versionar logs y artefactos
-# de modelo. Se calcula una sola vez al importar el módulo.
-TIMESTAMP_CORRIDA: str = datetime.now().strftime("%Y%m%d_%H%M%S")
+# DECISION: a single timestamp per run to version logs and model artifacts.
+# Computed once at module import time.
+RUN_TIMESTAMP: str = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-# Raíz del proyecto: src/logging_utils.py -> sube un nivel.
-RAIZ_PROYECTO: Path = Path(__file__).resolve().parent.parent
-DIR_DATA: Path = RAIZ_PROYECTO / "data"
-DIR_OUTPUTS: Path = RAIZ_PROYECTO / "outputs"
-DIR_FEATURES: Path = DIR_OUTPUTS / "features"
-DIR_MODELS: Path = DIR_OUTPUTS / "models"
-DIR_FIGURES: Path = DIR_OUTPUTS / "figures"
-DIR_LOGS: Path = DIR_OUTPUTS / "logs"
-PATH_CONFIG: Path = RAIZ_PROYECTO / "config.json"
+# Project root: src/logging_utils.py -> one level up.
+PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
+DATA_DIR: Path = PROJECT_ROOT / "data"
+OUTPUTS_DIR: Path = PROJECT_ROOT / "outputs"
+FEATURES_DIR: Path = OUTPUTS_DIR / "features"
+MODELS_DIR: Path = OUTPUTS_DIR / "models"
+FIGURES_DIR: Path = OUTPUTS_DIR / "figures"
+LOGS_DIR: Path = OUTPUTS_DIR / "logs"
+CONFIG_PATH: Path = PROJECT_ROOT / "config.json"
 
-_logger_inicializado = False
+_logger_initialized = False
 
 
-def configurar_logger(nombre: str = "pipeline") -> logging.Logger:
-    """Devuelve un logger que escribe a archivo y a stdout.
+def setup_logger(name: str = "pipeline") -> logging.Logger:
+    """Returns a logger that writes to a file and to stdout.
 
-    El archivo de log queda en `outputs/logs/run_<timestamp>.log` y se reutiliza
-    durante toda la corrida (el timestamp se fija al importar el módulo).
+    The log file lives at `outputs/logs/run_<timestamp>.log` and is reused
+    for the whole run (the timestamp is fixed at module import time).
 
-    DECISIÓN: los handlers se adjuntan al logger ROOT (no al nombrado) y los
-    loggers nombrados heredan vía `propagate=True`. Así da igual cuántas veces
-    `configurar_logger("foo")`, `configurar_logger("bar")` se llamen desde
-    distintos módulos: todos escriben al mismo archivo y stdout sin duplicar
-    handlers ni perder mensajes en loggers "hijos".
+    DECISION: handlers are attached to the ROOT logger (not the named one)
+    and named loggers inherit via `propagate=True`. This way it does not
+    matter how many times `setup_logger("foo")`, `setup_logger("bar")` are
+    called from different modules: they all write to the same file and
+    stdout without duplicating handlers or losing messages in child loggers.
     """
-    global _logger_inicializado
-    logger = logging.getLogger(nombre)
+    global _logger_initialized
+    logger = logging.getLogger(name)
 
-    if not _logger_inicializado:
-        DIR_LOGS.mkdir(parents=True, exist_ok=True)
-        archivo_log = DIR_LOGS / f"run_{TIMESTAMP_CORRIDA}.log"
+    if not _logger_initialized:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        log_file = LOGS_DIR / f"run_{RUN_TIMESTAMP}.log"
 
-        formato = logging.Formatter(
+        formatter = logging.Formatter(
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
-        handler_archivo = logging.FileHandler(archivo_log, encoding="utf-8")
-        handler_archivo.setFormatter(formato)
-        handler_stdout = logging.StreamHandler(sys.stdout)
-        handler_stdout.setFormatter(formato)
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setFormatter(formatter)
 
         root = logging.getLogger()
         root.setLevel(logging.INFO)
-        root.addHandler(handler_archivo)
-        root.addHandler(handler_stdout)
+        root.addHandler(file_handler)
+        root.addHandler(stdout_handler)
 
-        _logger_inicializado = True
-        logger.info("Logger inicializado. Archivo de log: %s", archivo_log)
+        _logger_initialized = True
+        logger.info("Logger initialized. Log file: %s", log_file)
 
-    # Aseguramos nivel y propagación del logger nombrado en cada llamada.
+    # Ensure level and propagation of the named logger on every call.
     logger.setLevel(logging.INFO)
     logger.propagate = True
     return logger
 
 
-def cargar_config() -> dict:
-    """Lee `config.json` y lo devuelve como dict."""
-    with PATH_CONFIG.open("r", encoding="utf-8") as f:
+def load_config() -> dict:
+    """Reads `config.json` and returns it as a dict."""
+    with CONFIG_PATH.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def guardar_config(config: dict) -> None:
-    """Sobrescribe `config.json` con la versión actualizada."""
-    with PATH_CONFIG.open("w", encoding="utf-8") as f:
+def save_config(config: dict) -> None:
+    """Overwrites `config.json` with the updated version."""
+    with CONFIG_PATH.open("w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
 
-def imprimir_checkpoint(logger: logging.Logger, titulo: str, items: dict) -> None:
-    """Imprime un checkpoint estandarizado al cerrar cada fase."""
-    barra = "=" * 70
-    logger.info(barra)
-    logger.info("CHECKPOINT — %s", titulo)
-    logger.info(barra)
-    for clave, valor in items.items():
-        logger.info("  %s: %s", clave, valor)
-    logger.info(barra)
+def print_checkpoint(logger: logging.Logger, title: str, items: dict) -> None:
+    """Prints a standardized checkpoint when closing each phase."""
+    bar = "=" * 70
+    logger.info(bar)
+    logger.info("CHECKPOINT — %s", title)
+    logger.info(bar)
+    for key, value in items.items():
+        logger.info("  %s: %s", key, value)
+    logger.info(bar)

@@ -1,30 +1,30 @@
 {
   "seed": 42,
-  "ventana_observacion_meses": 18,
-  "ventana_evaluacion_meses": 6,
+  "observation_window_months": 18,
+  "evaluation_window_months": 6,
   "smote_threshold": 0.2,
   "random_search_n_iter": 20,
   "cv_folds": 5,
   "bootstrap_iters": 200,
-  "_comentario_bootstrap": "Reducido de 1000 → 200 (D10) tras observar que el test set tiene 1.98M filas: 1000 iters × 6 escenarios (3 modelos × 2 thresholds) × 5 métricas sobre 1.98M samples proyectaba 60-90 min de bootstrap. 200 iters dan CI 95% por percentil con resolución estadística más que suficiente.",
+  "_bootstrap_comment": "Reduced from 1000 → 200 (D10) after observing that the test set has 1.98M rows: 1000 iters × 6 scenarios (3 models × 2 thresholds) × 5 metrics over 1.98M samples projected 60-90 min of bootstrap. 200 iters give a 95% percentile CI with more than enough statistical resolution.",
   "chunksize_messages": 500000,
-  "subsample_busqueda": 500000,
-  "_comentario_subsample": "Tamaño del subsample estratificado usado SOLO para la búsqueda de hiperparámetros en Fase 3 (D8 en PROGRESO.md). El modelo final se refitea sobre el train completo (~7.9M).",
-  "canales_objetivo": [
+  "search_subsample": 500000,
+  "_subsample_comment": "Size of the stratified subsample used ONLY for the hyperparameter search in Phase 3 (decision D8). The final model is refitted on the full train (~7.9M).",
+  "target_channels": [
     "email",
     "mobile_push"
   ],
   "dataset_md5": {
     "messages.csv.gz": "95fa332ef970a50c6c18a916b79f99af"
   },
-  "ventana_fechas": {
-    "_comentario": "Calculado en Fase 1 desde min/max de sent_at del dataset full (messages.csv.gz). Ver D1 y D5 en PROGRESO.md.",
+  "window_dates": {
+    "_comment": "Computed in Phase 1 from min/max of sent_at over the full dataset (messages.csv.gz). See decisions D1 and D5.",
     "min_sent_at": "2021-04-30T00:02:04",
     "max_sent_at": "2023-04-23T23:59:29",
-    "corte_observacion": "2021-04-23T23:59:29",
-    "corte_evaluacion": "2022-10-23T23:59:29"
+    "observation_cutoff": "2021-04-23T23:59:29",
+    "evaluation_cutoff": "2022-10-23T23:59:29"
   },
-  "paquetes": {
+  "packages": {
     "python": "3.11.4",
     "pandas": "3.0.3",
     "numpy": "2.4.4",

@@ -45,7 +45,7 @@ ml-crm-churn/
 ├── run.py                  # Pipeline entrypoint
 ├── config.json             # Hyperparameters and global configuration
 ├── requirements.txt        # Python dependencies
-├── referencias.bib         # BibTeX bibliography of the paper
+├── references.bib          # BibTeX bibliography of the paper
 ├── Communication-Churn-Prediction-in-Multichannel-CRM-Platforms.pdf
 ├── Prediccion-de-Churn-de-Comunicacion-en-Plataformas-CRM-Multicanal.pdf
 ├── src/
@@ -151,14 +151,14 @@ Pipeline parameters are controlled from `config.json`:
 | Parameter | Default value | Description |
 |---|---|---|
 | `seed` | 42 | Global random seed |
-| `ventana_observacion_meses` | 18 | Months of history for the features |
-| `ventana_evaluacion_meses` | 6 | Prediction horizon |
+| `observation_window_months` | 18 | Months of history for the features |
+| `evaluation_window_months` | 6 | Prediction horizon |
 | `smote_threshold` | 0.2 | Imbalance threshold to apply SMOTE |
 | `random_search_n_iter` | 20 | RandomizedSearchCV iterations |
 | `cv_folds` | 5 | Cross-validation folds |
 | `bootstrap_iters` | 200 | Iterations for 95% CI |
 | `chunksize_messages` | 500 000 | Rows per chunk when reading `messages.csv.gz` |
-| `subsample_busqueda` | 500 000 | Subsample for hyperparameter search |
+| `search_subsample` | 500 000 | Subsample for hyperparameter search |
 
 ---
 
@@ -169,6 +169,8 @@ Pipeline parameters are controlled from `config.json`:
 - **Split**: strict temporal split (features from the observation window, target from the evaluation window).
 - **Models**: Logistic Regression (baseline), Random Forest, XGBoost.
 - **Evaluation**: AUC-ROC, PR-AUC, F1, Precision, Recall with optimal threshold and bootstrapping.
+
+> **Note on naming**: the engineered feature column names are in Spanish (e.g. `tasa_open_email` = email open rate, `dias_antiguedad` = tenure in days). They are kept as generated to stay consistent with the published figures and the trained artifacts.
 
 ---
 
