@@ -32,11 +32,26 @@ vendor/
 # --- Notas internas (no relevantes para el repositorio público) ---
 claude.md
 PROGRESO.md
+.claude/
+
+# --- Fuentes LaTeX (no se publican; solo el PDF final) ---
+paper.tex
+paper_en.tex
+
+# --- Artefactos de compilación LaTeX ---
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
 
 # --- PDFs compilados intermedios ---
 *.pdf
 # Excepción: el paper final sí se versiona
-!Trenyan_V4.pdf
+!Communication-Churn-Prediction-in-Multichannel-CRM-Platforms.pdf
 
 # --- Editor / OS ---
 .DS_Store

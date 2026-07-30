@@ -1,36 +1,36 @@
-# Predicción de Churn de Comunicación CRM Multicanal
+# Communication Churn Prediction in Multichannel CRM Platforms
 
-Pipeline de Machine Learning para predecir qué usuarios dejarán de interactuar con campañas de mensajería multicanal (email y mobile push) en un retailer mediano.
+Machine Learning pipeline to predict which users will stop interacting with multichannel messaging campaigns (email and mobile push) at a mid-sized e-commerce retailer.
 
-Paper: _"Predicción de churn de comunicación en campañas CRM multicanal mediante aprendizaje automático"_ — Trenyan, A. (2026).
+Paper: [_"Applying Machine Learning to Communication Churn Prediction in Multichannel CRM Platforms: Email, Push, and In-App"_](Communication-Churn-Prediction-in-Multichannel-CRM-Platforms.pdf) — Trenyan, A. (2026).
 
 ---
 
-## Resultados
+## Results
 
-Evaluación sobre **~1.98M usuarios** (ventana 2022-10-23 → 2023-04-23), con intervalo de confianza 95% por bootstrap (200 iteraciones):
+Evaluation over **~1.98M users** (window 2022-10-23 → 2023-04-23), with 95% bootstrap confidence intervals (200 iterations):
 
-| Modelo | AUC-ROC | PR-AUC | F1 | Precision | Recall |
+| Model | AUC-ROC | PR-AUC | F1 | Precision | Recall |
 |---|---|---|---|---|---|
 | Logistic Regression | 0.771 | 0.773 | 0.791 | 0.675 | 0.954 |
 | **Random Forest** | **0.807** | **0.821** | **0.804** | **0.701** | **0.943** |
 | XGBoost | 0.806 | 0.820 | 0.803 | 0.698 | 0.946 |
 
-**Modelo ganador: Random Forest** (mejor AUC-ROC y PR-AUC).
+**Winning model: Random Forest** (best AUC-ROC and PR-AUC).
 
-Threshold óptimo elegido por máximo F1 en test. Ver reporte completo en [`outputs/report.md`](outputs/report.md).
+Optimal threshold selected by maximum F1 on the test set. See the full report in [`outputs/report.md`](outputs/report.md).
 
-### Curvas ROC y Precision-Recall
+### ROC and Precision-Recall curves
 
 ![ROC curves](outputs/figures/roc_curves_20260519_152108.png)
 
 ![PR curves](outputs/figures/pr_curves_20260519_152108.png)
 
-### Importancia de features — Random Forest
+### Feature importance — Random Forest
 
 ![Feature importance RF](outputs/figures/feature_importance_rf_20260519_152108.png)
 
-### Matrices de confusión
+### Confusion matrices
 
 | Logistic Regression | Random Forest | XGBoost |
 |---|---|---|
@@ -38,39 +38,38 @@ Threshold óptimo elegido por máximo F1 en test. Ver reporte completo en [`outp
 
 ---
 
-## Estructura del repositorio
+## Repository structure
 
 ```
-codigo/
-├── run.py                  # Entrypoint del pipeline
-├── config.json             # Hiperparámetros y configuración global
-├── requirements.txt        # Dependencias Python
-├── explorar_dataset.py     # Script de exploración inicial
-├── paper.tex               # Fuente LaTeX del paper
-├── referencias.bib         # Bibliografía BibTeX
+ml-crm-churn/
+├── run.py                  # Pipeline entrypoint
+├── config.json             # Hyperparameters and global configuration
+├── requirements.txt        # Python dependencies
+├── referencias.bib         # BibTeX bibliography of the paper
+├── Communication-Churn-Prediction-in-Multichannel-CRM-Platforms.pdf
 ├── src/
-│   ├── data.py             # Fase 1: carga y validación
-│   ├── features.py         # Fase 2: ingeniería de features
-│   ├── train.py            # Fase 3: entrenamiento (LR, RF, XGB)
-│   ├── evaluate.py         # Fase 4: evaluación y figuras
-│   └── logging_utils.py    # Logger y helpers compartidos
-├── data/                   # ← vacío en el repo; completar con el dataset
+│   ├── data.py             # Phase 1: loading and validation
+│   ├── features.py         # Phase 2: feature engineering
+│   ├── train.py            # Phase 3: training (LR, RF, XGB)
+│   ├── evaluate.py         # Phase 4: evaluation and figures
+│   └── logging_utils.py    # Shared logger and helpers
+├── data/                   # ← empty in the repo; populate with the dataset
 └── outputs/
-    ├── figures/            # Figuras generadas (versionadas)
-    ├── report.md           # Reporte de resultados (versionado)
-    ├── models/             # Modelos .pkl (no versionados, se regeneran)
-    ├── features/           # Features .parquet (no versionados)
-    └── logs/               # Logs de corridas (no versionados)
+    ├── figures/            # Generated figures (versioned)
+    ├── report.md           # Results report (versioned)
+    ├── models/             # .pkl models (not versioned, regenerated)
+    ├── features/           # .parquet features (not versioned)
+    └── logs/               # Run logs (not versioned)
 ```
 
 ---
 
-## Configuración del entorno
+## Environment setup
 
-**Requisitos**: Python 3.11.x
+**Requirements**: Python 3.11.x
 
 ```bash
-# Crear entorno virtual e instalar dependencias
+# Create virtual environment and install dependencies
 python3.11 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -78,103 +77,103 @@ pip install -r requirements.txt
 
 ---
 
-## Descarga del dataset
+## Dataset download
 
-El pipeline requiere 4 archivos en la carpeta `data/`:
+The pipeline requires 4 files in the `data/` folder:
 
-### Archivos auxiliares (Kaggle)
+### Auxiliary files (Kaggle)
 
-Descargar el dataset [**Direct Messaging**](https://www.kaggle.com/datasets/mkechinov/direct-messaging) de Kaggle y copiar los siguientes archivos a `data/`:
+Download the [**Direct Messaging**](https://www.kaggle.com/datasets/mkechinov/direct-messaging) dataset from Kaggle and copy the following files to `data/`:
 
 - `campaigns.csv`
 - `holidays.csv`
 - `client_first_purchase_date.csv`
 
 ```bash
-# Con la CLI de Kaggle (pip install kaggle)
+# With the Kaggle CLI (pip install kaggle)
 kaggle datasets download mkechinov/direct-messaging --unzip -p data/
 ```
 
-### Dataset completo de mensajes
+### Full messages dataset
 
-`messages.csv.gz` (21.5 GB comprimido, ~721M filas) se descarga directamente desde REES46:
+`messages.csv.gz` (21.5 GB compressed, ~721M rows) is downloaded directly from REES46:
 
 ```bash
 wget -P data/ https://data.rees46.com/datasets/direct-messaging/messages.csv.gz
 ```
 
-> **Nota**: La descarga pesa ~21.5 GB. El pipeline procesa el archivo comprimido por streaming (sin descomprimir a disco), por lo que se requiere ~30 GB libres en total.
+> **Note**: The download is ~21.5 GB. The pipeline processes the compressed file via streaming (without decompressing to disk), so ~30 GB of free space is required in total.
 
-**MD5 esperado** del archivo completo: `95fa332ef970a50c6c18a916b79f99af`
+**Expected MD5** of the full file: `95fa332ef970a50c6c18a916b79f99af`
 
 ```bash
-# Verificar integridad
+# Verify integrity
 md5sum data/messages.csv.gz   # Linux
 md5 data/messages.csv.gz      # macOS
 ```
 
 ---
 
-## Ejecución del pipeline
+## Running the pipeline
 
-El pipeline tiene 4 fases que se pueden correr en conjunto o de forma individual:
+The pipeline has 4 phases that can be run together or individually:
 
 ```bash
-# Correr las 4 fases en orden (recomendado primera vez)
+# Run all 4 phases in order (recommended the first time)
 python run.py
 
-# Correr una fase puntual
-python run.py --phase data        # Fase 1: validación del dataset
-python run.py --phase features    # Fase 2: ingeniería de features (~9h en CPU)
-python run.py --phase train       # Fase 3: entrenamiento de modelos
-python run.py --phase evaluate    # Fase 4: evaluación y generación de figuras
+# Run a single phase
+python run.py --phase data        # Phase 1: dataset validation
+python run.py --phase features    # Phase 2: feature engineering (~9h on CPU)
+python run.py --phase train       # Phase 3: model training
+python run.py --phase evaluate    # Phase 4: evaluation and figure generation
 
-# Forzar recálculo de features (ignora cache)
+# Force feature recomputation (ignores cache)
 python run.py --phase features --force
 ```
 
-### Tiempos estimados (CPU, sin GPU)
+### Estimated runtimes (CPU, no GPU)
 
-| Fase | Tiempo aproximado |
+| Phase | Approximate time |
 |---|---|
-| Fase 1 — validación | ~30–60 min (lectura MD5 + streaming) |
-| Fase 2 — features | ~9–12 h (procesamiento de 721M filas) |
-| Fase 3 — entrenamiento | ~2–4 h (búsqueda hiperparámetros + refit) |
-| Fase 4 — evaluación | ~15–30 min (bootstrap 200 iters) |
+| Phase 1 — validation | ~30–60 min (MD5 read + streaming) |
+| Phase 2 — features | ~9–12 h (processing 721M rows) |
+| Phase 3 — training | ~2–4 h (hyperparameter search + refit) |
+| Phase 4 — evaluation | ~15–30 min (bootstrap, 200 iters) |
 
-> Las fases 3 y 4 generan artefactos con timestamp en `outputs/models/` y `outputs/figures/`.
+> Phases 3 and 4 generate timestamped artifacts in `outputs/models/` and `outputs/figures/`.
 
-### Configuración
+### Configuration
 
-Los parámetros del pipeline se controlan desde `config.json`:
+Pipeline parameters are controlled from `config.json`:
 
-| Parámetro | Valor por defecto | Descripción |
+| Parameter | Default value | Description |
 |---|---|---|
-| `seed` | 42 | Semilla global de aleatoriedad |
-| `ventana_observacion_meses` | 18 | Meses de historial para las features |
-| `ventana_evaluacion_meses` | 6 | Horizonte de predicción |
-| `smote_threshold` | 0.2 | Umbral de desbalance para aplicar SMOTE |
-| `random_search_n_iter` | 20 | Iteraciones de RandomizedSearchCV |
-| `cv_folds` | 5 | Folds de cross-validation |
-| `bootstrap_iters` | 200 | Iteraciones para CI 95% |
-| `chunksize_messages` | 500 000 | Filas por chunk al leer `messages.csv.gz` |
-| `subsample_busqueda` | 500 000 | Subsample para búsqueda de hiperparámetros |
+| `seed` | 42 | Global random seed |
+| `ventana_observacion_meses` | 18 | Months of history for the features |
+| `ventana_evaluacion_meses` | 6 | Prediction horizon |
+| `smote_threshold` | 0.2 | Imbalance threshold to apply SMOTE |
+| `random_search_n_iter` | 20 | RandomizedSearchCV iterations |
+| `cv_folds` | 5 | Cross-validation folds |
+| `bootstrap_iters` | 200 | Iterations for 95% CI |
+| `chunksize_messages` | 500 000 | Rows per chunk when reading `messages.csv.gz` |
+| `subsample_busqueda` | 500 000 | Subsample for hyperparameter search |
 
 ---
 
-## Metodología (resumen)
+## Methodology (summary)
 
-- **Target**: churn de comunicación = usuario que no abre ni hace clic en ningún mensaje de email o mobile push durante la ventana de evaluación (6 meses).
-- **Features**: 20+ variables por usuario (tasas de apertura, clic, rebote, desuscripción, frecuencia de envíos, antigüedad, comportamiento por día de semana, etc.).
-- **Split**: temporal estricto (train ≤ corte de observación < test).
-- **Modelos**: Logistic Regression (baseline), Random Forest, XGBoost.
-- **Evaluación**: AUC-ROC, PR-AUC, F1, Precision, Recall con threshold óptimo y bootstrapping.
+- **Target**: communication churn = a user who neither opens nor clicks any email or mobile push message during the evaluation window (6 months).
+- **Features**: 40+ variables per user (open, click, bounce and unsubscribe rates, sending frequency, recency, cross-channel activity ratio, tenure, etc.).
+- **Split**: strict temporal split (features from the observation window, target from the evaluation window).
+- **Models**: Logistic Regression (baseline), Random Forest, XGBoost.
+- **Evaluation**: AUC-ROC, PR-AUC, F1, Precision, Recall with optimal threshold and bootstrapping.
 
 ---
 
-## Tecnologías
+## Tech stack
 
-| Librería | Versión |
+| Library | Version |
 |---|---|
 | Python | 3.11.4 |
 | pandas | 3.0.3 |
