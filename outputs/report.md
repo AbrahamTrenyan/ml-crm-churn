@@ -39,16 +39,16 @@ Metrics with 95% bootstrap confidence intervals (200 iterations).
 
 ## Figures
 
-![logreg](outputs/figures/confusion_logreg_20260519_152108.png)
+![logreg](figures/confusion_logreg_20260519_152108.png)
 
-![rf](outputs/figures/confusion_rf_20260519_152108.png)
+![rf](figures/confusion_rf_20260519_152108.png)
 
-![rf](outputs/figures/feature_importance_rf_20260519_152108.png)
+![rf](figures/feature_importance_rf_20260519_152108.png)
 
-![xgb](outputs/figures/confusion_xgb_20260519_152108.png)
+![xgb](figures/confusion_xgb_20260519_152108.png)
 
-![xgb](outputs/figures/feature_importance_xgb_20260519_152108.png)
+![xgb](figures/feature_importance_xgb_20260519_152108.png)
 
-![comparison](outputs/figures/roc_curves_20260519_152108.png)
+![comparison](figures/roc_curves_20260519_152108.png)
 
-![comparison](outputs/figures/pr_curves_20260519_152108.png)
+![comparison](figures/pr_curves_20260519_152108.png)

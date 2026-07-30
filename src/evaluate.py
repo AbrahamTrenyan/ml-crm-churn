@@ -429,7 +429,9 @@ def write_report(
     lines.append("")
     for name, paths in figures.items():
         for p in paths:
-            rel = p.relative_to(PROJECT_ROOT)
+            # Relative to the report's own directory so the images render
+            # when report.md is viewed on GitHub.
+            rel = p.relative_to(REPORT_PATH.parent)
             lines.append(f"![{name}]({rel})")
             lines.append("")
 

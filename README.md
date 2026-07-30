@@ -186,3 +186,9 @@ Pipeline parameters are controlled from `config.json`:
 | imbalanced-learn | 0.14.1 |
 | matplotlib | 3.10.9 |
 | pyarrow | 24.0.0 |
+
+---
+
+## License
+
+The source code is released under the [MIT License](LICENSE). The paper (PDF files) is © Abraham Trenyan — all rights reserved.
