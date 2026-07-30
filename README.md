@@ -191,4 +191,4 @@ Pipeline parameters are controlled from `config.json`:
 
 ## License
 
-The source code is released under the [MIT License](LICENSE). The paper (PDF files) is © Abraham Trenyan — all rights reserved.
+The source code is released under the [MIT License](LICENSE). The paper (PDF files) is © Abraham Trenyan. All rights reserved.
